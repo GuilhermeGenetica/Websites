@@ -23,12 +23,12 @@ if ($action === '') {
     sendJson(['success' => false, 'error' => 'Missing action parameter'], 400);
 }
 
-$basePath = realpath(__DIR__ . '/../filexplorer');
-if (!$basePath) {
-    $basePath = '/home/u262319756/domains/guilherme.onnetweb.com/public_html/filexplorer';
-    if (!is_dir($basePath)) {
-        sendJson(['success' => false, 'error' => 'File system root not found'], 500);
-    }
+$basePath = realpath(__DIR__ . '/../filexplorer')
+    ?: realpath(env('FILEXPLORER_PATH', ''))
+    ?: null;
+
+if (!$basePath || !is_dir($basePath)) {
+    sendJson(['success' => false, 'error' => 'File system root not found'], 500);
 }
 
 $HIDDEN_FILES = ['index.html', 'index.php', '.htaccess', '.env', 'wp-config.php'];
