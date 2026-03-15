@@ -1,0 +1,21 @@
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+
+    <FilesMatch "^(config\.php|\.env)$">
+        Order allow,deny
+        Deny from all
+    </FilesMatch>
+
+    RewriteCond %{REQUEST_FILENAME} !-f
+    RewriteRule ^(?!list\.php$|index\.php$)(.*)$ index.php [QSA,L]
+
+</IfModule>
+
+<IfModule mod_headers.c>
+    Header always set Access-Control-Allow-Origin "https://guilherme.onnetweb.com"
+    Header always set Access-Control-Allow-Methods "GET, POST, OPTIONS, DELETE"
+    Header always set Access-Control-Allow-Headers "Content-Type, Authorization, X-Requested-With, X-Wb-Token"
+    
+    # A LINHA ABAIXO FOI COMENTADA/REMOVIDA PARA PERMITIR RENDERIZAR HTML:
+    # Header always set Content-Type "application/json; charset=UTF-8"
+</IfModule>
