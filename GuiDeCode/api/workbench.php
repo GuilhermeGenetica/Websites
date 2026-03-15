@@ -17,11 +17,9 @@ switch ($action) {
 
     case 'listFiles':
         $user = requireAuth();
-        $basePath = realpath(__DIR__ . '/../filexplorer');
-        
-        if (!$basePath) {
-            $basePath = '/home/u262319756/domains/guilherme.onnetweb.com/public_html/filexplorer';
-        }
+        $basePath = realpath(__DIR__ . '/../filexplorer')
+        ?: realpath(env('FILEXPLORER_PATH', ''))
+        ?: null;
 
         if (!is_dir($basePath)) {
             mkdir($basePath, 0755, true);
