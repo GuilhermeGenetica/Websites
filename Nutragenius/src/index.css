@@ -1,0 +1,183 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 210 20% 98%;
+    --foreground: 224 28% 21%;
+    --card: 210 20% 100%;
+    --card-foreground: 224 28% 21%;
+    --popover: 210 20% 98%;
+    --popover-foreground: 224 28% 21%;
+    --primary: 187 100% 20%;
+    --primary-foreground: 210 20% 98%;
+    --secondary: 187 25% 90%;
+    --secondary-foreground: 187 100% 20%;
+    --muted: 210 20% 94%;
+    --muted-foreground: 224 28% 45%;
+    --accent: 38 92% 50%;
+    --accent-foreground: 224 28% 21%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 210 20% 98%;
+    --border: 210 20% 90%;
+    --input: 210 20% 92%;
+    --ring: 38 92% 50%;
+    --radius: 0.75rem;
+    --shadow: 224 28% 21%;
+    --brand-gold: 38 92% 50%;
+  }
+
+  .dark {
+    --background: 224 28% 12%;
+    --foreground: 210 20% 90%;
+    --card: 224 28% 15%;
+    --card-foreground: 210 20% 90%;
+    --popover: 224 28% 12%;
+    --popover-foreground: 210 20% 90%;
+    --primary: 187 80% 40%;
+    --primary-foreground: 224 28% 12%;
+    --secondary: 224 28% 20%;
+    --secondary-foreground: 210 20% 90%;
+    --muted: 224 28% 22%;
+    --muted-foreground: 210 20% 70%;
+    --accent: 38 92% 55%;
+    --accent-foreground: 224 28% 12%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 210 20% 90%;
+    --border: 224 28% 25%;
+    --input: 224 28% 20%;
+    --ring: 38 92% 55%;
+    --shadow: 224 28% 5%;
+    --brand-gold: 38 92% 55%;
+  }
+
+  /* CORREÇÃO 1: 
+    O bloco de código abaixo estava sem um seletor (começava com '{'), 
+    causando o erro 'Unexpected "{"'. 
+    Adicionei o seletor universal '*' para aplicar a borda globalmente.
+  */
+  * {
+    @apply border-border;
+  }
+  
+  body {
+    @apply bg-background text-foreground;
+    font-family: 'Inter', sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    transition: background-color 0.5s ease, color 0.5s ease;
+    overflow-x: hidden;
+  }
+} /* Fim do @layer base */
+
+@layer components {
+  .gold-bg {
+    @apply bg-brand-gold text-accent-foreground font-semibold shadow-md;
+    @apply hover:bg-opacity-90;
+    @apply transition-all;
+  }
+
+  .gradient-text {
+    @apply bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent;
+  }
+
+  .section-background {
+    @apply relative overflow-hidden;
+  }
+  .section-background::before {
+    content: '';
+    @apply absolute top-0 left-0 w-full h-full opacity-50;
+    background-image: radial-gradient(hsl(var(--primary) / 0.1) 1px, transparent 1px),
+      radial-gradient(hsl(var(--primary) / 0.1) 1px, transparent 1px);
+    background-size: 40px 40px;
+    background-position: 0 0, 20px 20px;
+    animation: pan 60s linear infinite;
+  }
+  .dark .section-background::before {
+    background-image: radial-gradient(hsl(var(--primary) / 0.15) 1px, transparent 1px),
+      radial-gradient(hsl(var(--primary) / 0.15) 1px, transparent 1px);
+  }
+
+  .cta-background {
+    @apply relative overflow-hidden;
+    background: linear-gradient(135deg, hsl(var(--primary)), hsl(var(--accent) / 0.8));
+  }
+  .cta-background::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-image: url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23ffffff' fill-opacity='0.1'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
+    animation: pan 90s linear infinite;
+  }
+
+  .hero-section-background {
+    @apply relative bg-background;
+  }
+  .hero-section-background::after {
+    content: '';
+    @apply absolute inset-0;
+    background: radial-gradient(ellipse at 50% -20%, hsl(var(--primary) / 0.1), transparent 70%);
+    z-index: 0;
+  }
+
+  .footer-background {
+    position: relative;
+  }
+
+  section > *,
+  footer > * {
+    position: relative;
+  }
+
+  .glass-effect {
+    background: hsla(var(--card), 0.6);
+    backdrop-filter: blur(12px) saturate(120%);
+    @apply border rounded-2xl shadow-lg;
+  }
+
+  .prose {
+    @apply text-foreground;
+  }
+  .prose h1,
+  .prose h2,
+  .prose h3 {
+    @apply text-foreground font-bold;
+  }
+  .prose p,
+  .prose li {
+    @apply text-muted-foreground;
+  }
+  .prose strong {
+    @apply text-foreground;
+  }
+  .prose a {
+    @apply text-primary hover:text-primary/80;
+  }
+  .prose .lead {
+    @apply text-lg text-muted-foreground;
+  }
+
+  .dark .prose p,
+  .dark .prose li {
+    @apply text-muted-foreground;
+  }
+} /* Fim do @layer components */
+
+@layer utilities {
+  @keyframes pan {
+    0% {
+      background-position: 0% 0%;
+    }
+    100% {
+      background-position: 100% 100%;
+    }
+  }
+} /* Fim do @layer utilities */
+
+

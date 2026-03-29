@@ -1,0 +1,331 @@
+name: "Mosdepth Coverage"
+id: "mosdepth_coverage"
+version: "0.3.8"
+category: "Quality Control"
+description: >
+  Mosdepth — fast, accurate depth-of-coverage calculation for WES and WGS BAM/CRAM files.
+  Uses a streaming algorithm with optional parallel htslib decompression threads for
+  significantly faster execution than samtools depth or bedtools genomecov.
+  Computes per-base, per-window, or per-BED-region coverage, generates cumulative
+  distribution files, and produces summary statistics for target coverage at clinical
+  thresholds (e.g. % bases covered at ≥10×, ≥20×, ≥30×). Output files are compatible
+  with MultiQC for aggregate QC reports. Essential QC step before variant calling
+  to verify adequate and uniform coverage across target regions.
+  Citation: Pedersen & Quinlan 2018 (doi:10.1093/bioinformatics/btx699).
+author: "Brent Pedersen"
+license: "MIT"
+tags: [coverage, depth, mosdepth, qc, wes, wgs, multiQC, bed, cram, clinical-thresholds]
+
+install:
+  method: conda
+  conda_env: seqnode
+  conda_package: "mosdepth=0.3.8"
+  conda_channels: [bioconda, conda-forge, defaults]
+  binary: mosdepth
+  version_check: "mosdepth --version 2>&1 | head -1"
+  size_estimate: "~20 MB"
+  docs_url: "https://github.com/brentp/mosdepth"
+  notes: >
+    Mosdepth requires a coordinate-sorted, indexed BAM or CRAM.
+    For CRAM input, the reference FASTA must be accessible via REF_PATH environment
+    variable or the CRAM header's M5 checksums must resolve to a local cache.
+    Output files produced by mosdepth (with prefix P):
+      P.mosdepth.summary.txt       — mean/median depth per chromosome and overall
+      P.mosdepth.global.dist.txt   — cumulative coverage distribution (whole genome)
+      P.mosdepth.region.dist.txt   — cumulative coverage distribution (regions, if -b used)
+      P.per-base.bed.gz            — per-base depth (if no_per_base=false)
+      P.regions.bed.gz             — per-region depth (if --by BED/window used)
+      P.quantized.bed.gz           — quantized coverage bands (if --quantize used)
+      P.thresholds.bed.gz          — bases at/above threshold depths (if --thresholds used)
+    All BED output files are bgzip-compressed with tabix indexes (.tbi).
+    MultiQC reads the .summary.txt and .dist.txt files automatically.
+  default_paths:
+    bin_path: "~/miniforge3/envs/seqnode/bin"
+    refs_path: ""
+    lib_path: ""
+
+runtime:
+  type: conda
+  conda_env: seqnode
+
+params:
+
+  # ── Output Prefix ──────────────────────────────────────────────────────────
+  prefix:
+    type: string
+    label: "Output Prefix"
+    default: "sample"
+    description: >
+      Base prefix for all mosdepth output files.
+      All output files will be named {prefix}.mosdepth.summary.txt,
+      {prefix}.per-base.bed.gz, {prefix}.regions.bed.gz, etc.
+      Use the sample ID here for easy identification in MultiQC reports.
+    category: "Output"
+
+  # ── Threading ──────────────────────────────────────────────────────────────
+  threads:
+    type: int
+    label: "Decompression Threads (-t)"
+    default: 4
+    min: 1
+    max: 32
+    description: >
+      Number of threads used for BAM/CRAM decompression.
+      Mosdepth's coverage calculation is single-threaded; additional threads only
+      speed up I/O decompression. 4 threads is a good balance for most use cases.
+      Setting >4 rarely improves performance on typical disks.
+    category: "Performance"
+
+  # ── Coverage Calculation Mode ──────────────────────────────────────────────
+  use_bed_targets:
+    type: bool
+    label: "Use BED Target Regions (--by BED)"
+    default: true
+    description: >
+      Restrict coverage calculation to intervals defined in a BED file.
+      Used for WES to compute coverage over capture kit target regions.
+      When disabled and window_size=0, only per-base coverage is computed.
+    category: "Coverage Mode"
+
+  window_size:
+    type: int
+    label: "Window Size (--by N bp)"
+    default: 0
+    min: 0
+    description: >
+      Compute coverage over fixed-size windows of this many base pairs.
+      Used for WGS when a target BED is not available.
+      Set to 500 for 500 bp windows (common for WGS QC).
+      Ignored when use_bed_targets=true and a BED file is provided.
+    category: "Coverage Mode"
+
+  # ── Read Filtering ─────────────────────────────────────────────────────────
+  min_base_quality:
+    type: int
+    label: "Min Base Quality (-Q)"
+    default: 0
+    min: 0
+    max: 60
+    description: >
+      Minimum base quality score for a base to contribute to coverage depth.
+      Bases below this threshold are excluded from depth calculation.
+      0: count all bases. 1: exclude quality-0 bases (Ns). 20: count only high-quality bases.
+    category: "Read Filtering"
+
+  min_mapping_quality:
+    type: int
+    label: "Min Mapping Quality (-q)"
+    default: 0
+    min: 0
+    max: 255
+    description: >
+      Minimum read mapping quality. Reads below this threshold are excluded entirely.
+      0: include all reads. 20: include only reads with ≥99% correct mapping.
+      Commonly set to 1 (exclude unmapped reads with MAPQ=0) or 20.
+    category: "Read Filtering"
+
+  flag_require:
+    type: int
+    label: "Required SAM Flags (--flag)"
+    default: 0
+    description: >
+      Reads must have ALL of these SAM flags set to be included.
+      Bitfield value (e.g. 2 = reads in proper pairs). 0 = no requirement.
+      Use decimal or hexadecimal values.
+    category: "Read Filtering"
+
+  flag_exclude:
+    type: int
+    label: "Excluded SAM Flags (--exclude-flag)"
+    default: 1796
+    description: >
+      Reads with ANY of these SAM flags are excluded from coverage calculation.
+      Default 1796 = exclude unmapped (4) + secondary (256) + duplicates (1024) + QC fail (512).
+      Breakdown: 4+256+1024+512=1796.
+      Adjust if you want to include secondary or duplicate reads in coverage metrics.
+    category: "Read Filtering"
+
+  # ── Per-base Output ────────────────────────────────────────────────────────
+  no_per_base:
+    type: bool
+    label: "Skip Per-base Coverage Output (--no-abbrev)"
+    default: false
+    description: >
+      Skip writing the per-base coverage BED file ({prefix}.per-base.bed.gz).
+      For WGS, this file can be 5–30 GB; skipping it dramatically reduces I/O time.
+      Recommended for WGS QC runs where only region/window averages are needed.
+      Per-region coverage is still computed when --by BED/window is set.
+    category: "Output"
+
+  # ── Quantize Coverage ──────────────────────────────────────────────────────
+  quantize:
+    type: string
+    label: "Quantize Coverage Bands (--quantize)"
+    default: ""
+    description: >
+      Quantize coverage into bands and output as {prefix}.quantized.bed.gz.
+      Format: comma-separated coverage thresholds (e.g. '0:5:20:500').
+      Creates bands: 0–4, 5–19, 20–499, ≥500.
+      Useful for quickly identifying regions with no/low/adequate/high coverage.
+      Leave empty to skip quantized output.
+    category: "Output"
+
+  # ── Coverage Thresholds ────────────────────────────────────────────────────
+  thresholds:
+    type: string
+    label: "Coverage Thresholds (--thresholds)"
+    default: "1,5,10,15,20,30,50,100"
+    description: >
+      Comma-separated depth thresholds for calculating the number of bases at/above
+      each depth. Produces {prefix}.thresholds.bed.gz.
+      Common clinical thresholds: '10,20,30' for WES QC (% bases at ≥10×, ≥20×, ≥30×).
+      Set '1,5,10,15,20,30,50,100' for a comprehensive coverage profile.
+      Leave empty to disable threshold output.
+    category: "Output"
+
+  # ── Median/Mean Coverage ────────────────────────────────────────────────────
+  use_median:
+    type: bool
+    label: "Use Median Instead of Mean (--use-median)"
+    default: false
+    description: >
+      Report median coverage instead of mean coverage in the summary file.
+      Median is more robust to coverage outliers (e.g. from repeat-rich regions).
+      Mean is the standard for comparison with GATK coverage expectations.
+    category: "Statistics"
+
+  # ── CRAM Reference ────────────────────────────────────────────────────────
+  reference_fa:
+    type: string
+    label: "Reference FASTA (for CRAM input)"
+    default: ""
+    description: >
+      Reference FASTA for decoding CRAM input files.
+      Required when bam_in is a CRAM file. Must have .fai index.
+      mosdepth sets REF_PATH and CRAM_REFERENCE environment variables internally.
+      Leave empty when using BAM input.
+    category: "CRAM"
+
+  # ── Chrom Selection ────────────────────────────────────────────────────────
+  chrom:
+    type: string
+    label: "Restrict to Chromosome (--chrom)"
+    default: ""
+    description: >
+      Restrict coverage calculation to a single chromosome.
+      Useful for quick per-chromosome QC checks or debugging.
+      Example: 'chr1', 'chrX', 'chr22'. Leave empty to process all chromosomes.
+    category: "Region Selection"
+
+  read_groups:
+    type: string
+    label: "Read Groups to Include (--read-groups)"
+    default: ""
+    description: >
+      Comma-separated list of @RG IDs to include (restrict coverage to these read groups).
+      Useful for multi-sample BAM files or for per-lane coverage analysis.
+      Leave empty to include all read groups.
+    category: "Region Selection"
+
+  include_flag:
+    type: string
+    label: "Include Only Reads Matching Flag"
+    default: ""
+    description: >
+      Alternative flag include filter as decimal or hex value.
+      Combined with flag_require using AND logic.
+    category: "Read Filtering"
+
+inputs:
+  bam_in:
+    type: file
+    extensions: [".bam", ".cram"]
+    label: "Input BAM/CRAM (coordinate-sorted + indexed)"
+    required: true
+    description: >
+      Coordinate-sorted and indexed BAM (.bai) or CRAM (.crai) file.
+      Index must be present alongside the input file.
+      For CRAM: reference FASTA must be accessible.
+
+  bed_targets:
+    type: file
+    extensions: [".bed", ".bed.gz"]
+    label: "Target BED File (optional)"
+    required: false
+    description: >
+      Capture kit or target region BED file for WES coverage analysis.
+      When provided and use_bed_targets=true, coverage is computed per BED interval.
+      Uncompressed or bgzip-compressed. Tabix index (.tbi) recommended for speed.
+
+outputs:
+  coverage_bed:
+    type: file
+    extensions: [".bed.gz"]
+    label: "Per-region Coverage (BED.gz)"
+    description: >
+      bgzip-compressed BED file with mean coverage per region.
+      Filename: {prefix}.regions.bed.gz (when BED/window target used).
+      Columns: chr, start, end, region_name (if BED), mean_depth.
+
+  summary_txt:
+    type: file
+    extensions: [".txt"]
+    label: "Coverage Summary"
+    description: >
+      Tab-delimited summary with mean/median coverage per chromosome.
+      Filename: {prefix}.mosdepth.summary.txt.
+      Consumed by MultiQC. Columns: chrom, length, bases, mean, min, max.
+
+  dist_txt:
+    type: file
+    extensions: [".txt"]
+    label: "Coverage Distribution"
+    description: >
+      Cumulative coverage distribution file for plotting coverage curves.
+      Filename: {prefix}.mosdepth.global.dist.txt and {prefix}.mosdepth.region.dist.txt.
+      Consumed by MultiQC for coverage distribution plots.
+
+  thresholds_bed:
+    type: file
+    extensions: [".bed.gz"]
+    label: "Coverage Thresholds BED (optional)"
+    description: >
+      Per-region count of bases at/above each coverage threshold.
+      Filename: {prefix}.thresholds.bed.gz. Only written when thresholds is non-empty.
+
+command:
+  template: |
+    set -euo pipefail
+    OUTDIR=$(dirname {coverage_bed})
+    mkdir -p "$OUTDIR"
+
+    {%- if reference_fa %}
+    export REF_PATH="{reference_fa}"
+    export CRAM_REFERENCE="{reference_fa}"
+    {%- endif %}
+
+    mosdepth \
+      --threads {threads} \
+      --min-base-quality {min_base_quality} \
+      --mapq {min_mapping_quality} \
+      --flag {flag_require} \
+      --exclude-flag {flag_exclude} \
+      {%- if no_per_base %} --no-abbrev {%- endif %} \
+      {%- if use_median %} --use-median {%- endif %} \
+      {%- if quantize %} --quantize {quantize} {%- endif %} \
+      {%- if thresholds %} --thresholds {thresholds} {%- endif %} \
+      {%- if chrom %} --chrom {chrom} {%- endif %} \
+      {%- if read_groups %} --read-groups {read_groups} {%- endif %} \
+      {%- if use_bed_targets and bed_targets %} --by {bed_targets} \
+      {%- elif window_size > 0 %} --by {window_size} {%- endif %} \
+      "$OUTDIR/{prefix}" \
+      {bam_in}
+
+    echo "[Mosdepth] Coverage complete. Summary:"
+    cat "$OUTDIR/{prefix}.mosdepth.summary.txt"
+
+    {%- if thresholds %}
+    echo "[Mosdepth] Coverage thresholds report:"
+    echo "Threshold columns: chr start end name" $(echo "{thresholds}" | tr ',' ' ' | sed 's/\([0-9]*\)/\1x/g')
+    {%- endif %}
+  shell: "/bin/bash"

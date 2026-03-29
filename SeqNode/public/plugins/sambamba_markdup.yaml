@@ -1,0 +1,268 @@
+name: "Sambamba Mark Duplicates"
+id: "sambamba_markdup"
+version: "1.0.1"
+category: "Preprocessing"
+description: >
+  High-performance BAM duplicate marking using Sambamba — significantly faster than
+  Picard MarkDuplicates for large files due to native multi-threading and parallel I/O.
+  Uses coordinate-sorted read pair positions to identify and flag PCR and optical
+  duplicates (SAM flag 0x400). Produces a duplicate-marked, coordinate-sorted, indexed BAM
+  compatible with GATK4, bcftools, and all standard downstream tools.
+  Sambamba also provides fast BAM sorting, merging, indexing, slicing, and flagstat.
+  Benchmark: ~3–5× faster than Picard for WGS BAMs on equivalent hardware.
+  Citation: Tarasov et al. 2015 (doi:10.1093/bioinformatics/btv098).
+author: "Artem Tarasov"
+license: "MIT"
+tags: [markdup, bam, preprocessing, duplicates, sambamba, fast, parallel, gatk-compatible]
+
+install:
+  method: conda
+  conda_env: seqnode
+  conda_package: "sambamba=1.0.1"
+  conda_channels: [bioconda, conda-forge, defaults]
+  binary: sambamba
+  version_check: "sambamba --version 2>&1 | head -1"
+  size_estimate: "~8 MB"
+  docs_url: "https://lomereiter.github.io/sambamba/docs/sambamba-markdup.html"
+  notes: >
+    Sambamba requires a coordinate-sorted BAM as input.
+    Produces .bai index automatically alongside the output BAM.
+    No reference genome required for duplicate marking.
+    Tmpdir must have free space ~1.5× the input BAM size.
+    Use a fast local disk (SSD/NVMe) for tmpdir for best performance.
+    Unlike Picard, Sambamba does NOT compute optical duplicates — all identified
+    duplicates are treated as PCR duplicates. For accurate optical duplicate rates
+    (important for NovaSeq data QC), use Picard MarkDuplicates.
+    Sambamba's output is fully compatible with GATK BaseRecalibrator and HaplotypeCaller.
+    For a pure speed benchmark: sambamba markdup is typically 3–5× faster than Picard.
+    Additional Sambamba subcommands (sort, merge, index, view, flagstat, slice, depth)
+    are available in the system PATH after conda install but not exposed by this plugin.
+  default_paths:
+    bin_path: "~/miniforge3/envs/seqnode/bin"
+    refs_path: ""
+    lib_path: ""
+
+runtime:
+  type: conda
+  conda_env: seqnode
+
+params:
+
+  # ── Threading & Performance ─────────────────────────────────────────────────
+  threads:
+    type: int
+    label: "Threads (--nthreads)"
+    default: 8
+    min: 1
+    max: 128
+    description: >
+      Number of parallel threads for duplicate marking.
+      Sambamba is natively multi-threaded — markdup scales well to 8–16 threads.
+      Beyond 32, gains diminish due to I/O bottlenecks.
+      Set to the number of available CPU cores for maximum throughput.
+    category: "Performance"
+
+  tmpdir:
+    type: string
+    label: "Temp Directory (--tmpdir)"
+    default: "/tmp/sambamba"
+    description: >
+      Temporary directory for intermediate sort files during duplicate marking.
+      Must have free space approximately equal to the input BAM size.
+      Use a fast local disk (SSD/NVMe preferred over network storage).
+      Cleaned automatically on successful completion.
+    category: "Performance"
+
+  overflow_list_size:
+    type: int
+    label: "Overflow List Size (--overflow-list-size)"
+    default: 200000
+    min: 1000
+    description: >
+      Maximum number of reads kept in RAM before spilling to the temp directory.
+      Larger values use more memory but reduce disk I/O (faster).
+      Default 200000. Increase to 500000–1000000 if you have ≥32 GB RAM.
+      Each record uses ~150–200 bytes; 200000 ≈ 30–40 MB RAM.
+    category: "Performance"
+
+  hash_table_size:
+    type: int
+    label: "Hash Table Size (--hash-table-size)"
+    default: 262144
+    min: 65536
+    description: >
+      Initial size of the hash table used for duplicate detection.
+      Must be a power of 2. Larger sizes reduce hash collisions and improve
+      performance for high-coverage or densely packed regions.
+      Default 262144 (256K). For WGS: try 524288 (512K) or 1048576 (1M).
+    category: "Performance"
+
+  io_buffer_size:
+    type: int
+    label: "I/O Buffer Size per Thread (--io-buffer-size)"
+    default: 128
+    min: 16
+    description: >
+      Size of the I/O buffer per thread in megabytes (MB).
+      Larger buffers improve read/write throughput at the cost of memory.
+      Default 128 MB per thread. Total RAM for I/O = threads × io_buffer_size.
+    category: "Performance"
+
+  # ── Duplicate Handling ─────────────────────────────────────────────────────
+  remove_duplicates:
+    type: bool
+    label: "Remove Duplicates (--remove-duplicates)"
+    default: false
+    description: >
+      Remove duplicate reads from the output BAM instead of only marking them
+      with SAM flag 0x400. Produces a smaller output file.
+      GATK tools automatically ignore marked duplicates, so removal is equivalent
+      for variant calling purposes. However, keeping marked duplicates preserves
+      the option to re-analyze with different duplication thresholds.
+    category: "Duplicates"
+
+  treat_all_as_optical:
+    type: bool
+    label: "Treat All Duplicates as Optical (not available in sambamba)"
+    default: false
+    description: >
+      NOTE: Sambamba does not distinguish optical from PCR duplicates.
+      All identified duplicates are treated as PCR duplicates.
+      If optical duplicate identification is critical, use Picard MarkDuplicates.
+      This flag is informational only and has no effect on sambamba's output.
+    category: "Duplicates"
+
+  # ── Read Handling ──────────────────────────────────────────────────────────
+  sort_buffer_size:
+    type: int
+    label: "Sort Buffer Size per Thread (MB)"
+    default: 256
+    min: 64
+    description: >
+      Memory (MB) allocated per thread for sorting during markdup preprocessing.
+      Total sort memory = threads × sort_buffer_size.
+      Increase if you see excessive temporary file creation.
+    category: "Performance"
+
+  compression_level:
+    type: int
+    label: "Output BAM Compression Level (--compression-level)"
+    default: 6
+    min: 0
+    max: 9
+    description: >
+      BAM output compression level.
+      0: uncompressed (largest, fastest to write, good for intermediate files).
+      1: fastest compression (large file, very fast).
+      6: balanced (default, good for final storage).
+      9: maximum compression (smallest file, slowest).
+    category: "Output"
+
+  # ── Filtering ─────────────────────────────────────────────────────────────
+  min_mapq:
+    type: int
+    label: "Min Mapping Quality (filter)"
+    default: 0
+    min: 0
+    max: 255
+    description: >
+      Reads with mapping quality below this threshold are excluded from
+      duplicate marking analysis (treated as unmapped).
+      Set 0 to include all reads regardless of mapping quality.
+    category: "Filtering"
+
+  filter_expression:
+    type: string
+    label: "Filter Expression (--filter)"
+    default: ""
+    description: >
+      Sambamba filter expression to select reads to process.
+      Reads not matching this expression are passed through unchanged.
+      Examples: 'not unmapped', 'mapping_quality >= 20', 'paired and proper_pair'.
+      Sambamba filter syntax is similar to SAMtools expression syntax.
+      Leave empty to process all reads.
+    category: "Filtering"
+
+  # ── Sorting Output ─────────────────────────────────────────────────────────
+  sort_output:
+    type: bool
+    label: "Sort and Index Output"
+    default: true
+    description: >
+      After marking duplicates, re-sort the output BAM by coordinate and
+      create a .bai index. Sambamba markdup output should already be
+      coordinate-sorted, but this ensures correctness and creates the index.
+    category: "Output"
+
+  index_threads:
+    type: int
+    label: "Index Threads"
+    default: 4
+    min: 1
+    description: >
+      Number of threads for BAM index generation (sambamba index).
+      Indexing is fast and usually limited by sequential I/O on a single disk.
+    category: "Output"
+
+  show_progress:
+    type: bool
+    label: "Show Progress Bar (--show-progress)"
+    default: false
+    description: >
+      Display a real-time progress bar on stderr during markdup.
+      Useful for interactive monitoring; disable for batch/pipeline runs
+      to avoid polluting log files.
+    category: "Output"
+
+inputs:
+  bam_in:
+    type: file
+    extensions: [".bam"]
+    label: "Input BAM (coordinate-sorted)"
+    required: true
+    description: >
+      Coordinate-sorted BAM with @RG read groups.
+      Verify sort order: samtools view -H {bam} | grep 'SO:coordinate'.
+      An existing .bai index is NOT required as input.
+
+outputs:
+  bam_out:
+    type: file
+    extensions: [".bam"]
+    label: "Duplicate-Marked BAM"
+    description: >
+      Output BAM with duplicate reads marked (SAM flag 0x400) or removed.
+      Automatically coordinate-sorted.
+
+  bai_out:
+    type: file
+    extensions: [".bai"]
+    label: "BAM Index"
+    description: >
+      Samtools-compatible .bai index file for random access.
+      Created automatically at {bam_out}.bai.
+
+command:
+  template: |
+    set -euo pipefail
+    OUTDIR=$(dirname {bam_out})
+    mkdir -p "$OUTDIR"
+    mkdir -p "{tmpdir}"
+
+    sambamba markdup \
+      --nthreads {threads} \
+      --tmpdir {tmpdir} \
+      --overflow-list-size {overflow_list_size} \
+      --hash-table-size {hash_table_size} \
+      --io-buffer-size {io_buffer_size} \
+      --compression-level {compression_level} \
+      {%- if remove_duplicates %} --remove-duplicates {%- endif %} \
+      {%- if filter_expression %} --filter '{filter_expression}' {%- endif %} \
+      {%- if show_progress %} --show-progress {%- endif %} \
+      {bam_in} {bam_out}
+
+    sambamba index --nthreads {index_threads} {bam_out}
+
+    echo "[Sambamba] MarkDuplicates complete: {bam_out}"
+    sambamba flagstat --nthreads {threads} {bam_out}
+  shell: "/bin/bash"

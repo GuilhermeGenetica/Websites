@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find /mnt/c/Users/WorkBench/Documents/GitHub/Websites -type f -name .*)",
+      "Bash(find /mnt/c/Users/WorkBench/Documents/GitHub/Websites -type f \\\\\\(-name *.js -o -name *.ts -o -name *.env* \\\\\\))",
+      "Bash(find /mnt/c/Users/WorkBench/Documents/GitHub/Websites -type f -name *.json)",
+      "Bash(du -sh /mnt/c/Users/WorkBench/Documents/GitHub/Websites/*/node_modules)",
+      "Bash(for folder:*)",
+      "Bash(do echo:*)"
+    ]
+  }
+}

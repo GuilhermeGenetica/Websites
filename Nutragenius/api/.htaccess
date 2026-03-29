@@ -1,0 +1,23 @@
+
+# =================================================================
+#  NutraGenius - API Security htaccess
+# =================================================================
+
+# --- Prevent Directory Listing ---
+Options -Indexes
+
+# --- Security Headers ---
+<IfModule mod_headers.c>
+    Header set X-Content-Type-Options "nosniff"
+    Header set X-Frame-Options "DENY"
+    Header set X-XSS-Protection "1; mode=block"
+</IfModule>
+
+# --- Only allow specific file access ---
+# This prevents direct access to config files, etc.
+<FilesMatch "\.(php)$">
+    Require all granted
+</FilesMatch>
+<FilesMatch "^(config\.php|db_setup\.php)$">
+    Require all denied
+</FilesMatch>

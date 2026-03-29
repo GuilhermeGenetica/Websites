@@ -1,0 +1,470 @@
+name: "GATK HaplotypeCaller"
+id: "gatk_haplotypecaller"
+version: "4.5.0"
+category: "Variant Calling"
+description: >
+  GATK HaplotypeCaller — gold-standard germline SNP and indel variant caller using
+  local re-assembly of haplotypes in active regions. Performs local de-novo assembly
+  of reads within candidate regions, followed by pair-HMM likelihood computation
+  against all possible haplotypes, enabling accurate detection of SNPs and indels
+  simultaneously. Supports single-sample VCF output, multi-sample GVCF mode for
+  joint genotyping pipelines (GenomicsDBImport + GenotypeGVCFs), and banded reference
+  model compression. Includes options for BQSR-compatible operation, contamination
+  estimation, and optional assembly region restriction to target intervals.
+  Citation: Van der Auwera & O'Connor, Genomics in the Cloud (O'Reilly 2020).
+author: "Broad Institute"
+license: "BSD-3-Clause"
+tags: [gatk, gatk4, snv, indel, variant-calling, germline, haplotypecaller, gvcf, joint-genotyping, bqsr]
+
+install:
+  method: conda
+  conda_env: seqnode
+  conda_package: "gatk4=4.5.0"
+  conda_channels: [bioconda, conda-forge, defaults]
+  binary: gatk
+  version_check: "gatk HaplotypeCaller --version 2>&1 | head -2"
+  size_estimate: "~600 MB (Java-based, bundles Picard and htslib)"
+  docs_url: "https://gatk.broadinstitute.org/hc/en-us/articles/360037225632-HaplotypeCaller"
+  notes: >
+    GATK 4.x requires Java 17+. The conda package bundles a compatible JVM.
+    Reference genome MUST have: (1) .fai index (samtools faidx ref.fa) and
+    (2) .dict sequence dictionary (gatk CreateSequenceDictionary -R ref.fa).
+    Input BAM must be: coordinate-sorted, indexed (.bai), and have @RG read groups.
+    For BQSR (Base Quality Score Recalibration), run BaseRecalibrator + ApplyBQSR before
+    HaplotypeCaller — not included in this plugin.
+    GVCF mode (-ERC GVCF): produces per-sample GVCF for joint genotyping.
+    Joint genotyping pipeline: HC (GVCF) → GenomicsDBImport → GenotypeGVCFs → VQSR/CNN.
+    For targeted panels, always specify -L intervals to restrict to target regions.
+    dbSNP VCF is optional but recommended for variant annotation of known variant IDs.
+    Contamination estimate (0.0–1.0) can be estimated with VerifyBamID2.
+  default_paths:
+    bin_path: "~/miniforge3/envs/seqnode/bin"
+    refs_path: "~/cnv_work/00_refs"
+    lib_path: ""
+  refs_required:
+    - key: hg38_dict
+      label: "hg38 FASTA + .fai + .dict"
+      url: "https://hgdownload.soe.ucsc.edu/goldenPath/hg38/bigZips/hg38.fa.gz"
+      subdir: "genomes/hg38"
+      index_cmd: "samtools faidx {ref_fa} && gatk CreateSequenceDictionary -R {ref_fa}"
+      size: "~3 GB compressed"
+    - key: dbsnp_hg38
+      label: "dbSNP VCF hg38 (optional)"
+      url: "https://ftp.ncbi.nih.gov/snp/organisms/human_9606_b151_GRCh38p7/VCF/GATK/00-All.vcf.gz"
+      subdir: "dbsnp/hg38"
+      size: "~15 GB"
+    - key: hapmap
+      label: "HapMap 3.3 (for contamination/VQSR)"
+      url: "https://storage.googleapis.com/genomics-public-data/resources/broad/hg38/v0/hapmap_3.3.hg38.vcf.gz"
+      subdir: "gatk_bundle/hg38"
+      size: "~50 MB"
+
+runtime:
+  type: conda
+  conda_env: seqnode
+
+params:
+
+  # ── Reference ─────────────────────────────────────────────────────────────
+  reference_fa:
+    type: string
+    label: "Reference FASTA (-R)"
+    default: "~/cnv_work/00_refs/genomes/hg38/hg38.fa"
+    description: >
+      Reference genome FASTA. Must have .fai index and .dict sequence dictionary.
+      Must match the reference used for read alignment.
+    category: "Reference"
+
+  dbsnp_vcf:
+    type: string
+    label: "dbSNP VCF (--dbsnp, optional)"
+    default: ""
+    description: >
+      Path to bgzip-compressed, tabix-indexed dbSNP VCF.gz for variant annotation.
+      When provided, known variants receive rsID annotations in the output ID field.
+      Does not affect genotyping; purely for annotation. Leave empty to skip.
+    category: "Reference"
+
+  # ── Java Runtime ───────────────────────────────────────────────────────────
+  java_memory:
+    type: string
+    label: "Java Max Heap (-Xmx)"
+    default: "8g"
+    description: >
+      Java maximum heap memory allocation (e.g. '8g', '16g', '32g').
+      HaplotypeCaller is memory-intensive during assembly.
+      Rule of thumb: 4g for exomes, 8–16g for WGS. Increase if you see GC pauses.
+    category: "Java"
+
+  java_extra_opts:
+    type: string
+    label: "Extra Java Options"
+    default: "-XX:GCTimeLimit=50 -XX:GCHeapFreeLimit=10"
+    description: >
+      Additional JVM arguments. Default options reduce garbage collection overhead.
+      '-XX:GCTimeLimit=50 -XX:GCHeapFreeLimit=10': limits GC overhead for large heaps.
+      '-Djava.io.tmpdir=/fast/disk/tmp': redirect temp files to a faster disk.
+    category: "Java"
+
+  # ── Output Mode ────────────────────────────────────────────────────────────
+  emit_ref_confidence:
+    type: string
+    label: "Emit Reference Confidence (-ERC)"
+    default: "NONE"
+    choices: ["NONE", "GVCF", "BP_RESOLUTION"]
+    description: >
+      Controls the output format for reference confidence (gVCF mode).
+      'NONE': standard VCF output with only variant sites (single-sample final VCF).
+      'GVCF': GVCF output with banded reference blocks for joint genotyping.
+      'BP_RESOLUTION': GVCF with per-base reference confidence (very large output).
+      Use 'GVCF' for multi-sample joint genotyping pipelines (recommended).
+    category: "Output"
+
+  gvcf_gq_bands:
+    type: string
+    label: "GQ Bands for GVCF (--gvcf-gq-bands)"
+    default: "1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,70,80,90,99"
+    description: >
+      Comma-separated GQ boundary values for GVCF banding compression.
+      Only relevant when emit_ref_confidence='GVCF'. These define the GQ quantization
+      boundaries; each band in the GVCF covers all reference sites within a GQ range.
+      Fewer bands = smaller file, less precision. Default GATK bands are listed.
+    category: "Output"
+
+  output_mode:
+    type: string
+    label: "Output Mode (--output-mode)"
+    default: "EMIT_VARIANTS_ONLY"
+    choices: ["EMIT_VARIANTS_ONLY", "EMIT_ALL_CONFIDENT_SITES", "EMIT_ALL_ACTIVE_SITES"]
+    description: >
+      'EMIT_VARIANTS_ONLY': output only variant sites (standard).
+      'EMIT_ALL_CONFIDENT_SITES': output variants and high-confidence reference sites.
+      'EMIT_ALL_ACTIVE_SITES': output all active regions (debugging only, very large).
+    category: "Output"
+
+  # ── Interval Targeting ─────────────────────────────────────────────────────
+  intervals:
+    type: string
+    label: "Restrict to Intervals (-L)"
+    default: ""
+    description: >
+      BED file path or genomic region string (e.g. 'chr1:1-100000', 'chrX').
+      Restricts HaplotypeCaller to these regions — strongly recommended for WES
+      (reduces runtime ~10× and prevents calling in off-target regions).
+      For multiple regions, comma-separate or use a BED file.
+      Leave empty for whole genome.
+    category: "Intervals"
+
+  interval_padding:
+    type: int
+    label: "Interval Padding (--interval-padding)"
+    default: 100
+    min: 0
+    description: >
+      Amount of padding (bp) added to both sides of each interval.
+      Ensures reads spanning interval boundaries are included.
+      Default 100 bp is appropriate for WES; 0 for strict target-only analysis.
+    category: "Intervals"
+
+  exclude_intervals:
+    type: string
+    label: "Exclude Intervals (-XL)"
+    default: ""
+    description: >
+      Genomic intervals to exclude from analysis (e.g. known problematic regions,
+      centromeres, segmental duplications). BED file path or region string.
+    category: "Intervals"
+
+  # ── Variant Calling Parameters ─────────────────────────────────────────────
+  stand_call_conf:
+    type: float
+    label: "Calling Confidence Threshold (--standard-min-confidence-threshold-for-calling)"
+    default: 30.0
+    min: 0.0
+    description: >
+      Minimum Phred-scaled confidence threshold for a variant to be called.
+      Sites below this threshold are not emitted. Standard: 30 (99.9% confidence).
+      Reduce to 10–20 for lower-coverage data or to increase sensitivity.
+    category: "Calling"
+
+  max_alternate_alleles:
+    type: int
+    label: "Max Alt Alleles per Site (--max-alternate-alleles)"
+    default: 6
+    min: 1
+    description: >
+      Maximum number of alt alleles considered per site during active region assembly.
+      Lower values speed up computation but may miss complex multiallelic variants.
+      Default 6 is appropriate for germline; increase for tumor/somatic analysis.
+    category: "Calling"
+
+  min_base_quality_score:
+    type: int
+    label: "Min Base Quality Score (--min-base-quality-score)"
+    default: 10
+    min: 0
+    max: 60
+    description: >
+      Minimum base quality score for a base to be considered in variant calling.
+      Bases below this threshold are ignored. Default 10 (90% base accuracy).
+    category: "Calling"
+
+  heterozygosity:
+    type: float
+    label: "Heterozygosity Prior (--heterozygosity)"
+    default: 0.001
+    description: >
+      Prior probability of heterozygosity at any given site (SNP rate).
+      Default 0.001 (1 SNP per 1000 bp) appropriate for human germline.
+      Increase for populations with high diversity; decrease for inbred lines.
+    category: "Calling"
+
+  heterozygosity_stdev:
+    type: float
+    label: "Heterozygosity Standard Deviation (--heterozygosity-stdev)"
+    default: 0.01
+    description: >
+      Standard deviation of the heterozygosity estimate. Controls spread of the prior.
+    category: "Calling"
+
+  indel_heterozygosity:
+    type: float
+    label: "Indel Heterozygosity Prior (--indel-heterozygosity)"
+    default: 0.000125
+    description: >
+      Prior probability of indel heterozygosity. Default 1.25e-4 (8× lower than SNP rate).
+    category: "Calling"
+
+  contamination_fraction:
+    type: float
+    label: "Contamination Fraction (--contamination-fraction-to-filter)"
+    default: 0.0
+    min: 0.0
+    max: 1.0
+    description: >
+      Estimated fraction of contaminating reads (0.0–1.0).
+      Downsamples reads to compensate for estimated contamination level.
+      Estimate using VerifyBamID2 or similar tools. Set 0.0 to disable.
+    category: "Calling"
+
+  dont_use_soft_clipped_bases:
+    type: bool
+    label: "Ignore Soft-Clipped Bases (--dont-use-soft-clipped-bases)"
+    default: false
+    description: >
+      Do not use soft-clipped bases when computing variant likelihoods.
+      Reduces false positives near alignment ends at cost of some sensitivity.
+      Enable for RNA-seq variant calling where soft-clipping is common.
+    category: "Calling"
+
+  # ── Assembly ───────────────────────────────────────────────────────────────
+  max_reads_per_alignment_start:
+    type: int
+    label: "Max Reads per Alignment Start (--max-reads-per-alignment-start)"
+    default: 50
+    description: >
+      Maximum number of reads to retain per alignment start position during
+      active region assembly. Set to 0 to disable downsampling.
+      Increase for high-coverage WGS (e.g. 500) to avoid excessive downsampling.
+    category: "Assembly"
+
+  active_probability_threshold:
+    type: float
+    label: "Active Region Probability Threshold (--active-probability-threshold)"
+    default: 0.002
+    description: >
+      Minimum probability of a site being in an active region to trigger
+      local assembly. Lower values call more active regions (more sensitive, slower).
+    category: "Assembly"
+
+  assembly_region_padding:
+    type: int
+    label: "Assembly Region Padding (--assembly-region-padding)"
+    default: 100
+    description: >
+      Padding added to assembly regions for local haplotype assembly.
+      Larger padding captures more context but increases memory/runtime.
+    category: "Assembly"
+
+  kmer_size:
+    type: string
+    label: "De Bruijn Graph Kmer Sizes (--kmer-size)"
+    default: "10,25"
+    description: >
+      Comma-separated list of kmer sizes for De Bruijn graph construction.
+      Multiple k-mer sizes increase assembly sensitivity for different allele lengths.
+      Adding larger k-mers (e.g. '10,25,50') can help call longer indels.
+    category: "Assembly"
+
+  # ── PCR/Library ────────────────────────────────────────────────────────────
+  pcr_free:
+    type: bool
+    label: "PCR-free Library (--pcr-indel-model NONE)"
+    default: false
+    description: >
+      Use '--pcr-indel-model NONE' for PCR-free library preparations.
+      PCR-free libraries have different indel error profiles.
+      Disable the PCR indel model for better indel calling in PCR-free data.
+    category: "Library"
+
+  pcr_indel_model:
+    type: string
+    label: "PCR Indel Error Model (--pcr-indel-model)"
+    default: "CONSERVATIVE"
+    choices: ["NONE", "HOSTILE", "AGGRESSIVE", "CONSERVATIVE"]
+    description: >
+      Model for PCR indel errors. 'NONE': no PCR indel model (PCR-free data).
+      'CONSERVATIVE': fewest false positives (default, good for most WES).
+      'AGGRESSIVE': more sensitive to indels near repeats.
+      'HOSTILE': very aggressive, highest FP rate. Overridden by pcr_free=true.
+    category: "Library"
+
+  # ── Paired Hmm ─────────────────────────────────────────────────────────────
+  pair_hmm_implementation:
+    type: string
+    label: "Pair HMM Implementation (--pair-hmm-implementation)"
+    default: "FASTEST_AVAILABLE"
+    choices: ["FASTEST_AVAILABLE", "AVX_LOGLESS_CACHING", "LOGLESS_CACHING", "ORIGINAL"]
+    description: >
+      Implementation of the pair HMM algorithm for likelihood calculation.
+      'FASTEST_AVAILABLE': auto-select the fastest available (AVX if CPU supports it).
+      'AVX_LOGLESS_CACHING': uses AVX SIMD instructions (fastest, requires AVX-capable CPU).
+      'LOGLESS_CACHING': fast, works on all CPUs without AVX. Recommended fallback.
+      'ORIGINAL': slowest reference implementation (for debugging only).
+    category: "Performance"
+
+  native_pair_hmm_threads:
+    type: int
+    label: "Pair HMM Threads (--native-pair-hmm-threads)"
+    default: 4
+    min: 1
+    description: >
+      Number of threads for the native (AVX) pair HMM computation.
+      Increasing this does NOT reduce wall-clock time proportionally
+      due to I/O and other bottlenecks. 4 is a good balance for exome data.
+    category: "Performance"
+
+  # ── Read Filters ──────────────────────────────────────────────────────────
+  disable_read_filter:
+    type: string
+    label: "Disable Read Filters (--disable-read-filter)"
+    default: ""
+    description: >
+      Comma-separated list of read filters to disable. Useful when input
+      data does not conform to standard GATK requirements.
+      Example: 'NotDuplicateReadFilter,MappedReadFilter'
+      Leave empty for default filters.
+    category: "Read Filters"
+
+  minimum_mapping_quality:
+    type: int
+    label: "Min Mapping Quality (--minimum-mapping-quality)"
+    default: 20
+    min: 0
+    description: >
+      Reads below this mapping quality are excluded from variant calling.
+      Default 20 (99% mapping accuracy). Reduce to 10 for repetitive regions
+      or increase to 30 for stricter specificity.
+    category: "Read Filters"
+
+  # ── Annotation ─────────────────────────────────────────────────────────────
+  annotation_groups:
+    type: string
+    label: "Annotation Groups (-G)"
+    default: "StandardAnnotation,StandardHCAnnotation"
+    description: >
+      Comma-separated annotation group names to apply.
+      'StandardAnnotation': QD, FS, MQ, MQRankSum, ReadPosRankSum, SOR.
+      'StandardHCAnnotation': adds AS_MQRankSum, AS_ReadPosRankSum for allele-specific VQSR.
+      'AS_StandardAnnotation': allele-specific version of standard annotations.
+      Leave empty for all default annotations.
+    category: "Annotation"
+
+  extra_annotations:
+    type: string
+    label: "Extra Annotations (-A)"
+    default: ""
+    description: >
+      Comma-separated additional annotation names to add.
+      Examples: 'Coverage', 'DepthPerAlleleBySample', 'StrandBiasBySample',
+      'TandemRepeat', 'BaseQualityRankSumTest', 'MappingQualityZero'.
+    category: "Annotation"
+
+inputs:
+  bam_in:
+    type: file
+    extensions: [".bam", ".cram"]
+    label: "Input BAM/CRAM (sorted + indexed)"
+    required: true
+    description: >
+      Coordinate-sorted, indexed BAM or CRAM file with @RG read groups.
+      Should be duplicate-marked and preferably BQSR-recalibrated.
+      Index must be present at {bam_in}.bai or {bam_in}.crai.
+
+outputs:
+  vcf_out:
+    type: file
+    extensions: [".vcf.gz", ".g.vcf.gz", ".vcf"]
+    label: "VCF / GVCF Output"
+    description: >
+      Variant calls in VCF format (when emit_ref_confidence=NONE) or
+      GVCF format (when emit_ref_confidence=GVCF) for joint genotyping.
+
+  vcf_index:
+    type: file
+    extensions: [".tbi", ".idx"]
+    label: "VCF Index"
+    description: "Tabix (.tbi) or GATK (.idx) index for the output VCF/GVCF."
+
+command:
+  template: |
+    set -euo pipefail
+    OUTDIR=$(dirname {vcf_out})
+    mkdir -p "$OUTDIR"
+
+    KMER_ARGS=""
+    IFS=',' read -ra KMERS <<< "{kmer_size}"
+    for k in "${KMERS[@]}"; do
+      KMER_ARGS="$KMER_ARGS --kmer-size $k"
+    done
+
+    gatk --java-options "-Xmx{java_memory} {java_extra_opts}" HaplotypeCaller \
+      -R {reference_fa} \
+      -I {bam_in} \
+      -O {vcf_out} \
+      --standard-min-confidence-threshold-for-calling {stand_call_conf} \
+      -ERC {emit_ref_confidence} \
+      --output-mode {output_mode} \
+      --max-alternate-alleles {max_alternate_alleles} \
+      --min-base-quality-score {min_base_quality_score} \
+      --heterozygosity {heterozygosity} \
+      --heterozygosity-stdev {heterozygosity_stdev} \
+      --indel-heterozygosity {indel_heterozygosity} \
+      --contamination-fraction-to-filter {contamination_fraction} \
+      --max-reads-per-alignment-start {max_reads_per_alignment_start} \
+      --active-probability-threshold {active_probability_threshold} \
+      --assembly-region-padding {assembly_region_padding} \
+      $KMER_ARGS \
+      --pair-hmm-implementation {pair_hmm_implementation} \
+      --native-pair-hmm-threads {native_pair_hmm_threads} \
+      --minimum-mapping-quality {minimum_mapping_quality} \
+      {%- if annotation_groups %} -G {annotation_groups} {%- endif %} \
+      {%- if extra_annotations %}
+      {%- for ann in extra_annotations.split(',') %} -A {{ann.strip()}} {%- endfor %}
+      {%- endif %} \
+      {%- if dbsnp_vcf %} --dbsnp {dbsnp_vcf} {%- endif %} \
+      {%- if intervals %} -L {intervals} {%- endif %} \
+      {%- if interval_padding > 0 %} --interval-padding {interval_padding} {%- endif %} \
+      {%- if exclude_intervals %} -XL {exclude_intervals} {%- endif %} \
+      {%- if pcr_free %} --pcr-indel-model NONE {%- elif pcr_indel_model %} --pcr-indel-model {pcr_indel_model} {%- endif %} \
+      {%- if dont_use_soft_clipped_bases %} --dont-use-soft-clipped-bases {%- endif %} \
+      {%- if emit_ref_confidence == "GVCF" and gvcf_gq_bands %}
+      {%- for band in gvcf_gq_bands.split(',') %} --gvcf-gq-bands {{band.strip()}} {%- endfor %}
+      {%- endif %} \
+      {%- if disable_read_filter %}
+      {%- for rf in disable_read_filter.split(',') %} --disable-read-filter {{rf.strip()}} {%- endfor %}
+      {%- endif %}
+
+    echo "[GATK HC] Variant calling complete: {vcf_out}"
+    gatk CountVariants -V {vcf_out} 2>/dev/null || bcftools stats {vcf_out} | grep "^SN"
+  shell: "/bin/bash"

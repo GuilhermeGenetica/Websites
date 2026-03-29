@@ -1,0 +1,24 @@
+# =================================================================
+#  NutraGenius - React Router htaccess
+# =================================================================
+# This file enables client-side routing for the React application
+# and ensures that API calls are not rewritten.
+
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  
+  # --- API Calls ---
+  # Do not rewrite requests for files in the /api/ directory
+  RewriteRule ^api/ - [L]
+  
+  # --- Static Assets ---
+  # Do not rewrite requests for existing files or directories
+  RewriteCond %{REQUEST_FILENAME} -f [OR]
+  RewriteCond %{REQUEST_FILENAME} -d
+  RewriteRule ^ - [L]
+  
+  # --- React App ---
+  # For all other requests, serve the index.html file
+  # This allows React Router to handle the routing
+  RewriteRule ^ index.html [L]
+</IfModule>

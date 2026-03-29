@@ -1,0 +1,15 @@
+{
+  "_comment": "Copy this content to ~/.config/claude/claude_desktop_config.json (Claude Desktop) or equivalent MCP client",
+  "mcpServers": {
+    "seqnode-local": {
+      "url": "http://localhost:8000/mcp/sse",
+      "type": "sse",
+      "description": "SeqNode-OS local instance"
+    },
+    "seqnode-remote": {
+      "url": "https://api.seqnode.onnetweb.com/mcp/sse",
+      "type": "sse",
+      "description": "SeqNode-OS production instance"
+    }
+  }
+}

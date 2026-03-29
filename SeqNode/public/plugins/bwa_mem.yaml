@@ -1,0 +1,460 @@
+name: "BWA-MEM Align"
+id: "bwa_mem"
+version: "0.7.18"
+category: "Alignment"
+description: >
+  Burrows-Wheeler Aligner (MEM algorithm) for short-read alignment to a reference genome.
+  Maps paired-end or single-end Illumina reads (70 bp to 1 Mbp) using the Maximal Exact Match
+  (MEM) seeding strategy, which gives superior sensitivity and speed compared to BWA-backtrack (aln).
+  Supports chimeric alignment detection, supplementary alignments for split reads, clipping
+  of bases with low base quality at ends, and proper read group annotation (@RG).
+  Outputs SAM piped optionally through samtools sort/index to produce a coordinate-sorted,
+  indexed BAM ready for duplicate marking and GATK preprocessing.
+  Citation: Li 2013 (arXiv:1303.3997) / Li & Durbin 2010 (doi:10.1093/bioinformatics/btp698).
+author: "Heng Li"
+license: "MIT"
+tags: [alignment, bwa, bwa-mem, fastq, bam, short-read, illumina, paired-end, read-group, gatk]
+
+install:
+  method: conda
+  conda_env: seqnode
+  conda_package: "bwa=0.7.18"
+  conda_channels: [bioconda, conda-forge, defaults]
+  binary: bwa
+  version_check: "bwa 2>&1 | grep -i version | head -1"
+  size_estimate: "~3 MB binary + reference genome index (8–12 GB for hg38)"
+  docs_url: "https://bio-bwa.sourceforge.net/bwa.shtml"
+  notes: >
+    BWA requires a pre-built index for the reference genome before alignment.
+    Index command: bwa index /path/to/ref.fa
+    Index files created: ref.fa.amb, ref.fa.ann, ref.fa.bwt, ref.fa.pac, ref.fa.sa
+    Total index size: ~8 GB for hg38 (must reside in the same directory as ref.fa).
+    Use samtools faidx to create the .fai index (required for CRAM output and GATK).
+    For hg38 + alt chromosomes (GRCh38DH), use bwa-postalt.js post-processing.
+    For very long reads (PacBio, ONT), use BWA-MEM2 or minimap2 instead.
+    Read groups (@RG) must be set for GATK BaseQualityScoreRecalibration to work.
+    Minimum required RG tags: ID, SM. Recommended: also LB, PL, PU.
+  default_paths:
+    bin_path: "~/miniforge3/envs/seqnode/bin"
+    refs_path: "~/cnv_work/00_refs"
+    lib_path: ""
+  refs_required:
+    - key: hg38
+      label: "hg38 (UCSC, chr-prefix)"
+      url: "https://hgdownload.soe.ucsc.edu/goldenPath/hg38/bigZips/hg38.fa.gz"
+      subdir: "genomes/hg38"
+      index_cmd: "bwa index {ref_fa} && samtools faidx {ref_fa}"
+      size: "~3 GB compressed, ~8 GB BWA index"
+    - key: GRCh38
+      label: "GRCh38 (Ensembl, no-prefix)"
+      url: "https://ftp.ensembl.org/pub/release-113/fasta/homo_sapiens/dna/Homo_sapiens.GRCh38.dna.primary_assembly.fa.gz"
+      subdir: "genomes/GRCh38"
+      index_cmd: "bwa index {ref_fa} && samtools faidx {ref_fa}"
+      size: "~3 GB compressed"
+    - key: hg19
+      label: "hg19 (UCSC, chr-prefix)"
+      url: "https://hgdownload.soe.ucsc.edu/goldenPath/hg19/bigZips/hg19.fa.gz"
+      subdir: "genomes/hg19"
+      index_cmd: "bwa index {ref_fa} && samtools faidx {ref_fa}"
+      size: "~3 GB compressed"
+    - key: GRCh37
+      label: "GRCh37 (Ensembl, no-prefix)"
+      url: "https://ftp.ensembl.org/pub/grch37/current/fasta/homo_sapiens/dna/Homo_sapiens.GRCh37.dna.primary_assembly.fa.gz"
+      subdir: "genomes/GRCh37"
+      index_cmd: "bwa index {ref_fa} && samtools faidx {ref_fa}"
+      size: "~3 GB compressed"
+
+runtime:
+  type: conda
+  conda_env: seqnode
+
+params:
+
+  # ── Reference ─────────────────────────────────────────────────────────────
+  reference_fa:
+    type: string
+    label: "Reference FASTA"
+    default: "~/cnv_work/00_refs/genomes/hg38/hg38.fa"
+    description: >
+      Path to the indexed reference genome FASTA.
+      Must have BWA index files (.amb, .ann, .bwt, .pac, .sa) in the same directory.
+      Also requires .fai index (samtools faidx) for CRAM output and GATK compatibility.
+    category: "Reference"
+
+  genome_build:
+    type: string
+    label: "Genome Build (for @RG header only)"
+    default: "hg38"
+    choices: ["hg38", "hg19", "GRCh38", "GRCh37", "GRCh38DH", "hs37d5", "T2T-CHM13"]
+    description: >
+      Genome build label written to the @PG header. Does NOT affect alignment itself.
+      Used for tracking metadata in BAM headers only.
+    category: "Reference"
+
+  # ── Read Groups ────────────────────────────────────────────────────────────
+  sample_name:
+    type: string
+    label: "Sample Name (@RG SM)"
+    default: "SAMPLE"
+    description: >
+      Sample identifier written to BAM @RG SM tag. This is the biological sample ID.
+      Required by GATK for variant calling (must match sample name in pedigree/PED files).
+      Use consistent names across all BAMs from the same sample (e.g. multi-lane merging).
+    category: "Read Groups"
+
+  library_id:
+    type: string
+    label: "Library ID (@RG LB)"
+    default: "LIB001"
+    description: >
+      Library preparation identifier (@RG LB). Picard MarkDuplicates uses LB
+      to identify duplicate sets across lanes from the same library.
+      Different library preps (even same sample) should have different LB values.
+    category: "Read Groups"
+
+  platform:
+    type: string
+    label: "Sequencing Platform (@RG PL)"
+    default: "ILLUMINA"
+    choices: ["ILLUMINA", "ONT", "PACBIO", "ELEMENT", "BGI", "ULTIMA", "SINGULAR", "IONTORRENT", "LS454"]
+    description: >
+      Sequencing platform identifier for the @RG PL tag.
+      GATK uses PL to adjust certain error model parameters.
+      'ILLUMINA' is the correct value for all Illumina instruments.
+    category: "Read Groups"
+
+  platform_unit:
+    type: string
+    label: "Platform Unit (@RG PU)"
+    default: "unit1"
+    description: >
+      Platform unit for @RG PU tag. Should uniquely identify a sequencing run lane.
+      Recommended format: {flowcell_barcode}.{lane}.{sample_barcode}
+      Example: H7YNLADXX.1.ACTTGA or HWUSI-EAS1000.1.ATCACG.
+      Picard uses PU for optical duplicate detection.
+    category: "Read Groups"
+
+  run_date:
+    type: string
+    label: "Run Date (@RG DT)"
+    default: ""
+    description: >
+      Date of sequencing run in ISO 8601 format (e.g. 2024-01-15T12:00:00+0000).
+      Written to @RG DT tag. Leave empty to omit.
+    category: "Read Groups"
+
+  sequencing_center:
+    type: string
+    label: "Sequencing Center (@RG CN)"
+    default: ""
+    description: >
+      Name of the sequencing center (@RG CN). Leave empty to omit.
+    category: "Read Groups"
+
+  predicted_insert_size:
+    type: int
+    label: "Predicted Insert Size (@RG PI)"
+    default: 0
+    description: >
+      Expected insert size (bp) written to @RG PI. Used by Picard tools
+      for expected insert size metrics. Set 0 to omit.
+    category: "Read Groups"
+
+  # ── Performance ────────────────────────────────────────────────────────────
+  threads:
+    type: int
+    label: "BWA Threads (-t)"
+    default: 8
+    min: 1
+    max: 128
+    description: >
+      Number of threads for BWA-MEM alignment.
+      Alignment scales well to 8–16 threads. Beyond 32 threads,
+      gains are diminishing due to I/O bottlenecks on most systems.
+    category: "Performance"
+
+  sort_threads:
+    type: int
+    label: "Samtools Sort Threads"
+    default: 4
+    min: 1
+    description: >
+      Additional threads passed to samtools sort (-@ flag).
+      Total memory usage = sort_memory × sort_threads.
+    category: "Performance"
+
+  sort_memory:
+    type: string
+    label: "Samtools Sort Memory per Thread (-m)"
+    default: "2G"
+    description: >
+      Memory per thread for samtools sort (e.g. '2G', '768M', '4G').
+      Total memory consumed by sort = sort_threads × sort_memory.
+      Insufficient memory causes disk spilling (slower but still correct).
+    category: "Performance"
+
+  # ── Alignment Algorithm ────────────────────────────────────────────────────
+  min_seed_length:
+    type: int
+    label: "Min Seed Length (-k)"
+    default: 19
+    min: 4
+    description: >
+      Minimum seed length for MEM seeding (-k). Shorter seeds increase sensitivity
+      for highly divergent sequences but increase runtime. Default 19 is optimal
+      for 100–150 bp Illumina reads. Reduce to 15 for older 50–75 bp reads.
+    category: "Algorithm"
+
+  band_width:
+    type: int
+    label: "Band Width for Smith-Waterman (-w)"
+    default: 100
+    min: 1
+    description: >
+      Band width for the banded Smith-Waterman alignment (-w).
+      Increase for sequences with many indels or structural variants.
+      Default 100 is appropriate for germline WES/WGS.
+    category: "Algorithm"
+
+  off_diagonal_dropoff:
+    type: int
+    label: "Off-diagonal Dropoff (-d)"
+    default: 100
+    description: >
+      Stop extension when the difference between best and current alignment
+      score exceeds this value (-d). Affects speed/sensitivity trade-off.
+    category: "Algorithm"
+
+  internal_seeds_threshold:
+    type: float
+    label: "Internal Seed Occurrence Limit (-r)"
+    default: 1.5
+    description: >
+      Trigger re-seeding when the MEM is longer than min_seed_length × this value (-r).
+      Lower values increase sensitivity for repetitive sequences at cost of runtime.
+    category: "Algorithm"
+
+  seed_occurrence_in_ref:
+    type: int
+    label: "Skip Seed Occurrence Limit (-c)"
+    default: 500
+    description: >
+      Skip seeds that occur more than this many times in the reference (-c).
+      Prevents alignment to highly repetitive regions. Increase for repetitive genomes.
+    category: "Algorithm"
+
+  # ── Scoring ───────────────────────────────────────────────────────────────
+  match_score:
+    type: int
+    label: "Match Score (-A)"
+    default: 1
+    description: >
+      Score for matching bases (-A). Higher relative to mismatch_penalty
+      favors alignments. Standard Illumina: 1.
+    category: "Scoring"
+
+  mismatch_penalty:
+    type: int
+    label: "Mismatch Penalty (-B)"
+    default: 4
+    description: >
+      Penalty for mismatching bases (-B). Higher values are more stringent.
+      Standard: 4 for Illumina (low error rate). Use 2 for noisy reads.
+    category: "Scoring"
+
+  gap_open_penalty:
+    type: string
+    label: "Gap Open Penalty (-O)"
+    default: "6,6"
+    description: >
+      Gap opening penalty for deletions and insertions (format: del,ins).
+      Single value applies to both. Higher values reduce sensitivity to indels.
+      Standard: '6,6'. Use '4,4' for indel-rich sequences.
+    category: "Scoring"
+
+  gap_extension_penalty:
+    type: string
+    label: "Gap Extension Penalty (-E)"
+    default: "1,1"
+    description: >
+      Penalty per extra base in a gap extension (format: del,ins).
+      Total gap penalty = open + extension × (length - 1).
+    category: "Scoring"
+
+  clipping_penalty:
+    type: string
+    label: "Clipping Penalty (-L)"
+    default: "5,5"
+    description: >
+      Penalty for 5' and 3' soft-clipping (format: 5prime,3prime).
+      '5,5' is standard. Set to '0,0' to avoid penalizing clipped alignments
+      (useful for amplicon data or reads with adapters).
+    category: "Scoring"
+
+  unpaired_penalty:
+    type: int
+    label: "Unpaired Read Penalty (-U)"
+    default: 17
+    description: >
+      Penalty applied for an unpaired read in a pair (-U).
+      Higher values force BWA to prefer paired alignments.
+    category: "Scoring"
+
+  min_alignment_score:
+    type: int
+    label: "Min Alignment Score for Output (-T)"
+    default: 30
+    description: >
+      Reads with alignment score below this threshold will NOT be output
+      as primary alignments (they are reported as unmapped or supplementary).
+      Default 30 is appropriate for most purposes.
+    category: "Scoring"
+
+  # ── Output Options ─────────────────────────────────────────────────────────
+  mark_secondary:
+    type: bool
+    label: "Mark Short Splits as Secondary (-M)"
+    default: true
+    description: >
+      Mark split-read supplementary alignments as secondary alignment flag (0x100)
+      for compatibility with Picard and GATK tools (-M flag).
+      Required when downstream tools do not understand supplementary alignments.
+      Disable only for structural variant callers that need supplementary reads.
+    category: "Output"
+
+  output_all_alignments:
+    type: bool
+    label: "Output All Alignments Including Unmapped (-a)"
+    default: false
+    description: >
+      Output all found alignments, including unmapped reads and secondary alignments
+      that would normally be excluded. Creates larger output but preserves all information.
+    category: "Output"
+
+  append_fasta_comment:
+    type: bool
+    label: "Append FASTA Comment to SAM (-C)"
+    default: false
+    description: >
+      Append FASTA/FASTQ comments (text after the first space in read name)
+      as additional fields in SAM output. Useful for preserving Illumina flowcell info.
+    category: "Output"
+
+  # ── Post-Alignment Processing ──────────────────────────────────────────────
+  sort_output:
+    type: bool
+    label: "Sort & Index Output BAM"
+    default: true
+    description: >
+      Pipe BWA-MEM output through samtools sort and then create an index (.bai).
+      Produces a coordinate-sorted, indexed BAM ready for duplicate marking.
+      Set false to output unsorted SAM/BAM (useful for piping to other tools).
+    category: "Post-Alignment"
+
+  output_cram:
+    type: bool
+    label: "Output CRAM Instead of BAM"
+    default: false
+    description: >
+      Output in CRAM format instead of BAM. CRAM is ~60% smaller than BAM
+      but requires the reference FASTA at read time.
+      Requires .fai index on reference_fa.
+    category: "Post-Alignment"
+
+  interleaved_input:
+    type: bool
+    label: "Interleaved FASTQ Input (-p)"
+    default: false
+    description: >
+      Treat Read 1 input as an interleaved paired-end FASTQ file (R1 and R2 alternating).
+      When enabled, Read 2 input is ignored.
+    category: "Post-Alignment"
+
+inputs:
+  read1:
+    type: file
+    extensions: [".fastq", ".fastq.gz", ".fq", ".fq.gz"]
+    label: "Read 1 FASTQ (R1)"
+    required: true
+    description: >
+      Forward reads. Can be gzip-compressed. For interleaved PE data,
+      provide only this input and enable interleaved_input.
+
+  read2:
+    type: file
+    extensions: [".fastq", ".fastq.gz", ".fq", ".fq.gz"]
+    label: "Read 2 FASTQ (R2) — optional for single-end"
+    required: false
+    description: >
+      Reverse reads for paired-end sequencing. Leave empty for single-end or interleaved.
+
+outputs:
+  bam_out:
+    type: file
+    extensions: [".bam", ".cram"]
+    label: "Aligned BAM (or CRAM)"
+    description: >
+      Coordinate-sorted (when sort_output=true) aligned BAM or CRAM file
+      with properly annotated read groups.
+
+  bai_out:
+    type: file
+    extensions: [".bai", ".crai"]
+    label: "BAM/CRAM Index"
+    description: >
+      Samtools index for random access (.bai for BAM, .crai for CRAM).
+      Created automatically when sort_output=true.
+
+command:
+  template: |
+    set -euo pipefail
+    OUTDIR=$(dirname {bam_out})
+    mkdir -p "$OUTDIR"
+
+    RG="@RG\tID:{sample_name}\tSM:{sample_name}\tLB:{library_id}\tPL:{platform}\tPU:{platform_unit}"
+    {%- if run_date %} RG="$RG\tDT:{run_date}" {%- endif %}
+    {%- if sequencing_center %} RG="$RG\tCN:{sequencing_center}" {%- endif %}
+    {%- if predicted_insert_size > 0 %} RG="$RG\tPI:{predicted_insert_size}" {%- endif %}
+
+    {%- if output_cram %}
+    OUTPUT_FMT="-O cram,version=3.0 --reference {reference_fa}"
+    {%- else %}
+    OUTPUT_FMT=""
+    {%- endif %}
+
+    bwa mem \
+      -t {threads} \
+      -k {min_seed_length} \
+      -w {band_width} \
+      -d {off_diagonal_dropoff} \
+      -r {internal_seeds_threshold} \
+      -c {seed_occurrence_in_ref} \
+      -A {match_score} \
+      -B {mismatch_penalty} \
+      -O {gap_open_penalty} \
+      -E {gap_extension_penalty} \
+      -L {clipping_penalty} \
+      -U {unpaired_penalty} \
+      -T {min_alignment_score} \
+      {%- if mark_secondary %} -M {%- endif %} \
+      {%- if output_all_alignments %} -a {%- endif %} \
+      {%- if append_fasta_comment %} -C {%- endif %} \
+      {%- if interleaved_input %} -p {%- endif %} \
+      -R "$RG" \
+      {reference_fa} \
+      {read1} \
+      {%- if read2 and not interleaved_input %} {read2} {%- endif %} \
+      {%- if sort_output %}
+      | samtools sort \
+          -@ {sort_threads} \
+          -m {sort_memory} \
+          $OUTPUT_FMT \
+          -o {bam_out} - \
+      && samtools index -@ {sort_threads} {bam_out}
+      {%- else %}
+      > {bam_out}
+      {%- endif %}
+
+    echo "[BWA-MEM] Alignment complete: {bam_out}"
+    samtools flagstat {bam_out}
+  shell: "/bin/bash"

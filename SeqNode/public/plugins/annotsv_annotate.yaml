@@ -1,0 +1,117 @@
+name: "AnnotSV Annotation"
+id: "annotsv_annotate"
+version: "3.4.2"
+category: "Annotation"
+description: "Annotation and ranking of structural variants and CNVs with clinical databases (OMIM, ClinVar, gnomAD, DDD, ACMG classification)"
+author: "Veronique Geoffroy"
+license: "GPL-3.0"
+tags: [annotation, sv, cnv, clinical, acmg]
+
+# ─── Installation ────────────────────────────────────────────────────────────
+install:
+  method: conda
+  conda_env: seqnode
+  conda_package: "annotsv=3.4.2"
+  conda_channels: [bioconda, conda-forge, defaults]
+  binary: AnnotSV
+  version_check: "AnnotSV 2>&1 | grep -i version | head -1 || AnnotSV --version 2>&1 | head -1"
+  size_estimate: "~50 MB binary + ~8 GB annotation databases"
+  docs_url: "https://lbgi.fr/AnnotSV/"
+  notes: >
+    After conda install, AnnotSV requires annotation databases.
+    Use the 'Download Databases' button below OR run:
+      make -C $ANNOTSV install-human-annotation
+    Databases are stored in $ANNOTSV/share/AnnotSV/Annotations_Human/.
+    The ANNOTSV environment variable must point to the share directory.
+    Supports: OMIM, ClinVar, gnomAD, DDD, DECIPHER, ExAC, 1000G, ACMG SVI.
+  default_paths:
+    bin_path: "~/miniforge3/envs/seqnode/bin"
+    refs_path: "~/miniforge3/envs/seqnode/share/AnnotSV"
+    lib_path: "~/miniforge3/envs/seqnode/share/AnnotSV/Annotations_Human"
+  refs_required:
+    - key: annotsv_db
+      label: "AnnotSV Human Annotations"
+      install_cmd: "make -C $ANNOTSV install-human-annotation"
+      subdir: "Annotations_Human"
+      size: "~8 GB"
+  env_vars:
+    ANNOTSV: "{refs_path}"
+
+# ─── Runtime ─────────────────────────────────────────────────────────────────
+runtime:
+  type: system
+  env_vars:
+    ANNOTSV: "{refs_path}"
+
+# ─── Parameters ──────────────────────────────────────────────────────────────
+params:
+  genome_build:
+    type: string
+    label: "Genome Build"
+    default: "GRCh38"
+    choices: ["GRCh38", "GRCh37"]
+    description: "Reference genome build for annotation"
+  sv_min_size:
+    type: int
+    label: "Min SV Size (bp)"
+    default: 50
+    description: "Minimum size of SVs to annotate"
+  output_dir:
+    type: string
+    label: "Output Directory"
+    default: ""
+    description: "Output directory (leave empty to use working dir)"
+  tx_file:
+    type: string
+    label: "Transcript File"
+    default: ""
+    description: "Path to preferred transcript list. Leave empty to use RefSeq default."
+  ranking_score_threshold:
+    type: float
+    label: "ACMG Ranking Threshold"
+    default: 0.0
+    description: "Filter SVs below this ACMG pathogenicity score (0=off)"
+
+# ─── Inputs ──────────────────────────────────────────────────────────────────
+inputs:
+  input_bed:
+    type: file
+    extensions: [".bed", ".vcf", ".vcf.gz"]
+    label: "Input BED/VCF"
+    required: true
+    description: "Structural variants in BED or VCF format"
+
+# ─── Outputs ─────────────────────────────────────────────────────────────────
+outputs:
+  output_tsv:
+    type: file
+    extensions: [".tsv"]
+    label: "Annotated TSV"
+    description: "Full annotation table with ACMG classification"
+  output_unannotated:
+    type: file
+    extensions: [".tsv"]
+    label: "Unannotated SVs"
+    description: "SVs below min-size threshold not annotated"
+
+# ─── Command ─────────────────────────────────────────────────────────────────
+command:
+  template: |
+    set -euo pipefail
+    export ANNOTSV="{refs_path}"
+    {%- if output_dir %}
+    mkdir -p "{output_dir}"
+    {%- endif %}
+
+    AnnotSV \
+      -SVinputFile {input_bed} \
+      -outputFile {output_tsv} \
+      -genomeBuild {genome_build} \
+      -SVminSize {sv_min_size} \
+      {%- if tx_file %} -txFile {tx_file} {%- endif %} \
+      {%- if output_dir %} -outputDir {output_dir} {%- endif %} \
+      {%- if ranking_score_threshold and ranking_score_threshold > 0.0 %} -rankingScoreThreshold {ranking_score_threshold} {%- endif %}
+
+    echo "[AnnotSV] Annotation complete: {output_tsv}"
+    echo "[AnnotSV] Total annotated SVs: $(grep -v '^AnnotSV' {output_tsv} | tail -n +2 | wc -l)"
+  shell: "/bin/bash"

@@ -1,0 +1,11 @@
+## Pages
+- [Ações de Voluntariado - Projeto Fénix](/actions): Participe em ações de voluntariado ativas. Encontre oportunidades para ajudar na sua comunidade.
+- [Administração - Login](/admin): No description available
+- [Área do Validador - Projeto Fénix](/validator): Área restrita para validação de pedidos e ofertas de ajuda. Acesso apenas para equipa autorizada.
+- [Blog - Projeto Fénix](/blog): No description available
+- [Cadastrar Atividade - Projeto Fénix](/createaction): Organize e registe uma nova atividade de voluntariado para ajudar a comunidade.
+- [Mural de Ajudas - Projeto Fénix](/helpboard): Consulte todos os pedidos e ofertas de ajuda ativos. Filtre por tipo, fase, região e urgência para encontrar como pode contribuir.
+- [Preciso de Ajuda - Projeto Fénix](/helprequest): Registe o seu pedido de ajuda após os incêndios. Organizamos a ajuda em 3 fases: emergência, reconstrução e revitalização.
+- [Projeto Fénix - Das cinzas, a esperança. Juntos, reerguemos Portugal](/home): Plataforma que conecta vítimas dos incêndios em Portugal com cidadãos, empresas e ONGs. Ajuda organizada em 3 fases: Emergência, Reconstrução e Revitalização.
+- [Quero Ajudar - Projeto Fénix](/offerhelp): Registe a sua oferta de ajuda para vítimas dos incêndios. Voluntariado, doações e apoio organizado em 3 fases.
+- [Registar Nova Conta - Projeto Fénix](/register): Crie uma nova conta de validador ou administrador para ajudar na gestão da plataforma Projeto Fénix.

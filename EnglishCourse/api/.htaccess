@@ -1,0 +1,41 @@
+# Adress: api/
+# File: .htaccess
+# Extension: .htaccess
+
+# --- START: Security Directives ---
+
+# Disallow Directory Listing
+Options -Indexes
+
+# Ensure that configuration files cannot be accessed directly via a web browser.
+# This is CRITICAL for security.
+<Files "config.php">
+    Require all denied
+</Files>
+
+<Files "db_connect.php">
+    Require all denied
+</Files>
+
+<Files ".env">
+    # Although .env should be outside /api, this is a critical safeguard.
+    Require all denied
+</Files>
+
+# Ensure PHP files are executed (Allow all for the API endpoints like login.php, register.php, etc.)
+# Your existing rule:
+<FilesMatch "\.php$">
+    Require all granted
+</FilesMatch>
+
+# Prevent access to temporary Composer files that might be left behind
+<FilesMatch "(\.json|\.lock|\.log)$">
+    Require all denied
+</FilesMatch>
+
+# Optional: Disable non-essential methods if your server allows it
+<LimitExcept GET POST OPTIONS>
+    Require all denied
+</LimitExcept>
+
+# --- END: Security Directives ---

@@ -67,7 +67,7 @@ switch ($action) {
         $user = requireAuth();
         $basePath = realpath(__DIR__ . '/../filexplorer');
         if (!$basePath) {
-            $basePath = '/home/u262319756/domains/guilherme.onnetweb.com/public_html/filexplorer';
+            sendJson(['success' => false, 'error' => 'Pasta /filexplorer/ não encontrada.'], 500);
         }
 
         $requestedPath = $_GET['path'] ?? '';
@@ -89,7 +89,7 @@ switch ($action) {
         $user = requireAuth();
         $basePath = realpath(__DIR__ . '/../filexplorer');
         if (!$basePath) {
-            $basePath = '/home/u262319756/domains/guilherme.onnetweb.com/public_html/filexplorer';
+            sendJson(['success' => false, 'error' => 'Pasta /filexplorer/ não encontrada.'], 500);
         }
 
         $requestedPath = $_GET['path'] ?? '';

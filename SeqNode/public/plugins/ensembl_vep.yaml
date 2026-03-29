@@ -1,0 +1,1027 @@
+name: "Ensembl VEP"
+id: "ensembl_vep"
+version: "112.0"
+category: "Annotation"
+description: >
+  Ensembl Variant Effect Predictor (VEP) — gold-standard functional annotation of SNVs,
+  indels, and structural variants. Predicts molecular consequences on genes, transcripts,
+  regulatory features, and proteins using Ensembl/GENCODE or RefSeq gene models.
+  Integrates SIFT, PolyPhen-2, gnomAD v2/v3 exome+genome allele frequencies, ClinVar
+  pathogenicity, dbSNP co-localisation, CADD, REVEL, AlphaMissense, SpliceAI, MaxEntScan,
+  LOFTEE, UTRAnnotator, and any custom VCF/BED/bigWig annotations via --custom.
+  Supports full offline mode with local Ensembl VEP cache, HGVS notation (coding + protein),
+  MANE Select, APPRIS, Transcript Support Level, and Sequence Ontology consequence terms.
+  Output formats: VCF (INFO/CSQ), JSON, tab-delimited TXT.
+  Compatible with MultiQC and downstream clinical reporting pipelines.
+  Citation: McLaren et al. 2016 (doi:10.1186/s13059-016-0974-4).
+author: "Ensembl / EMBL-EBI"
+license: "Apache-2.0"
+tags: [vep, annotation, snv, indel, sv, functional, vcf, clinvar, sift, polyphen, gnomad, cadd, revel, alphamissense, spliceai, loftee, ensembl, refseq, mane, hgvs, clinical, offline, multiQC]
+
+install:
+  method: conda
+  conda_env: seqnode
+  conda_package: "ensembl-vep=112.0"
+  conda_channels: [bioconda, conda-forge, defaults]
+  binary: vep
+  version_check: "vep --help 2>&1 | head -3"
+  size_estimate: "~150 MB tool; ~18 GB GRCh38 cache + FASTA; plugins vary"
+  docs_url: "https://www.ensembl.org/info/docs/tools/vep/script/index.html"
+  notes: >
+    STEP 1 — Install the tool:
+      mamba install -c bioconda -c conda-forge ensembl-vep=112.0
+
+    STEP 2 — Download the offline cache (choose one method):
+      Method A (vep_install, recommended):
+        vep_install -a cf -s homo_sapiens -y GRCh38 -c ~/.vep --CONVERT
+      Method B (rsync, faster outside EU):
+        mkdir -p ~/.vep && cd ~/.vep
+        rsync -avr --progress rsync://ftp.ensembl.org/ensembl/pub/release-112/variation/indexed_vep_cache/homo_sapiens_vep_112_GRCh38.tar.gz .
+        tar xzf homo_sapiens_vep_112_GRCh38.tar.gz
+
+    STEP 3 — Download reference FASTA (required for --hgvs and --check_ref):
+        mkdir -p ~/.vep/homo_sapiens/112_GRCh38
+        rsync -avr rsync://ftp.ensembl.org/ensembl/pub/release-112/fasta/homo_sapiens/dna/Homo_sapiens.GRCh38.dna.toplevel.fa.gz \
+              ~/.vep/homo_sapiens/112_GRCh38/
+        bgzip -d ~/.vep/homo_sapiens/112_GRCh38/Homo_sapiens.GRCh38.dna.toplevel.fa.gz
+        samtools faidx ~/.vep/homo_sapiens/112_GRCh38/Homo_sapiens.GRCh38.dna.toplevel.fa
+
+    OPTIONAL — ClinVar custom annotation:
+        wget https://ftp.ncbi.nlm.nih.gov/pub/clinvar/vcf_GRCh38/clinvar.vcf.gz
+        wget https://ftp.ncbi.nlm.nih.gov/pub/clinvar/vcf_GRCh38/clinvar.vcf.gz.tbi
+
+    OPTIONAL — CADD scores (plugin):
+        Download from https://cadd.gs.washington.edu/download
+        whole_genome_SNVs.tsv.gz + InDels.tsv.gz (both need .tbi index via tabix)
+
+    OPTIONAL — REVEL (plugin):
+        wget https://rothsj06.dmz.hpc.mssm.edu/revel-v1.3_all_chromosomes.zip
+        unzip; bgzip; tabix -f -s 1 -b 2 -e 2 revel_with_transcript_ids.tsv.gz
+
+    OPTIONAL — AlphaMissense (plugin):
+        wget https://storage.googleapis.com/dm_alphamissense/AlphaMissense_hg38.tsv.gz
+        tabix -p vcf AlphaMissense_hg38.tsv.gz
+
+    OPTIONAL — SpliceAI (plugin):
+        Download from Illumina BaseSpace: spliceai_scores.raw.snv.hg38.vcf.gz + indel file
+
+    OPTIONAL — LOFTEE (plugin):
+        git clone https://github.com/konradjk/loftee ~/.vep/Plugins/loftee
+        wget LOFTEE human ancestor FA, conservation scores — see LOFTEE README
+
+    VEP --everything flag enables: --sift b --polyphen b --ccds --hgvs --symbol
+      --numbers --domains --regulatory --canonical --protein --biotype --af
+      --af_1kg --af_gnomade --af_gnomadg --max_af --pubmed --uniprot
+      --mane --tsl --appris --variant_class --gene_phenotype --check_existing
+
+  default_paths:
+    bin_path: "~/miniforge3/envs/seqnode/bin"
+    refs_path: "~/.vep"
+    lib_path: ""
+  refs_required:
+    - key: vep_cache_grch38
+      label: "VEP Cache (GRCh38, release 112, ~16 GB)"
+      url: "rsync://ftp.ensembl.org/ensembl/pub/release-112/variation/indexed_vep_cache/homo_sapiens_vep_112_GRCh38.tar.gz"
+      subdir: "homo_sapiens/112_GRCh38"
+      size: "~16 GB"
+    - key: vep_fasta_grch38
+      label: "GRCh38 Toplevel FASTA (required for --hgvs, ~3 GB)"
+      url: "rsync://ftp.ensembl.org/ensembl/pub/release-112/fasta/homo_sapiens/dna/Homo_sapiens.GRCh38.dna.toplevel.fa.gz"
+      subdir: "homo_sapiens/112_GRCh38"
+      size: "~3 GB"
+    - key: clinvar_vcf
+      label: "ClinVar VCF (optional, for --custom)"
+      url: "https://ftp.ncbi.nlm.nih.gov/pub/clinvar/vcf_GRCh38/clinvar.vcf.gz"
+      subdir: "custom"
+      size: "~80 MB"
+
+runtime:
+  type: conda
+  conda_env: seqnode
+
+params:
+
+  # ── Input / Output ─────────────────────────────────────────────────────────
+  output_format:
+    type: string
+    label: "Output Format"
+    default: "vcf"
+    choices: ["vcf", "json", "tab"]
+    description: >
+      VEP annotation output format.
+      'vcf': standard VCF with consequences encoded in the INFO/CSQ field (recommended
+      for downstream clinical pipelines, IGV, and VCF-aware tools).
+      'json': one JSON object per variant — richest format, useful for programmatic parsing.
+      'tab': tab-delimited text, one line per consequence — easiest for spreadsheet review.
+    category: "Input/Output"
+
+  compress_output:
+    type: bool
+    label: "Compress Output (bgzip)"
+    default: false
+    description: >
+      bgzip-compress the output VCF/text file. When true, the output file will be
+      .vcf.gz with an associated tabix index. Requires bgzip in PATH.
+      Recommended for storing annotated VCFs long-term; required for some downstream
+      tools (e.g. bcftools, GLnexus).
+    category: "Input/Output"
+
+  species:
+    type: string
+    label: "Species"
+    default: "homo_sapiens"
+    description: >
+      Species name as used in the Ensembl cache directory.
+      'homo_sapiens': human (default).
+      'mus_musculus': mouse. 'rattus_norvegicus': rat.
+      Must match the species folder name inside the cache dir (--dir).
+    category: "Input/Output"
+
+  assembly:
+    type: string
+    label: "Assembly"
+    default: "GRCh38"
+    choices: ["GRCh38", "GRCh37"]
+    description: >
+      Reference genome assembly to use for annotation.
+      'GRCh38': hg38 — current Ensembl default (recommended for new projects).
+      'GRCh37': hg19 — required for data mapped to GRCh37/hg19.
+      Must match the cache version and the assembly used for alignment and variant calling.
+    category: "Input/Output"
+
+  # ── Cache & Reference ──────────────────────────────────────────────────────
+  cache_dir:
+    type: string
+    label: "VEP Cache Directory (--dir)"
+    default: "~/.vep"
+    description: >
+      Root directory containing the Ensembl VEP offline cache.
+      VEP expects: {dir}/{species}/{release}_{assembly}/ (e.g. ~/.vep/homo_sapiens/112_GRCh38/).
+      Download with: vep_install -a cf -s homo_sapiens -y GRCh38 -c ~/.vep
+      Setting this to refs_path allows the GUI to manage the cache location.
+    category: "Cache"
+
+  fasta:
+    type: string
+    label: "Reference FASTA (--fasta)"
+    default: "~/.vep/homo_sapiens/112_GRCh38/Homo_sapiens.GRCh38.dna.toplevel.fa"
+    description: >
+      Path to the reference genome FASTA (must be indexed with samtools faidx).
+      Required for: --hgvs, --check_ref, HGVS notation, and plugins that need sequence.
+      Should match the assembly set in 'assembly' parameter.
+      Download: see install notes above.
+    category: "Cache"
+
+  offline:
+    type: bool
+    label: "Offline Mode (--offline)"
+    default: true
+    description: >
+      Run entirely offline using the local cache and FASTA.
+      No internet connection required during annotation.
+      Strongly recommended for reproducibility, speed, and HPC environments
+      without internet access. Requires a downloaded cache (see install notes).
+    category: "Cache"
+
+  merged:
+    type: bool
+    label: "Use Merged Cache (--merged)"
+    default: false
+    description: >
+      Use the merged Ensembl+RefSeq cache (installed as homo_sapiens_merged).
+      Provides both Ensembl/GENCODE and RefSeq transcripts in a single run.
+      Requires separate download: vep_install -a cf -s homo_sapiens_merged -y GRCh38 -c ~/.vep
+    category: "Cache"
+
+  refseq:
+    type: bool
+    label: "Use RefSeq Cache (--refseq)"
+    default: false
+    description: >
+      Use RefSeq transcript models (NM_, NR_) instead of Ensembl/GENCODE.
+      Preferred for clinical reporting labs that use RefSeq for HGVS nomenclature.
+      Requires a separate RefSeq cache: vep_install -a cf -s homo_sapiens_refseq -y GRCh38 -c ~/.vep
+      Cannot be combined with --merged.
+    category: "Cache"
+
+  check_ref:
+    type: bool
+    label: "Check Reference Allele (--check_ref)"
+    default: false
+    description: >
+      Verify that the input VCF reference allele matches the reference FASTA.
+      Adds an extra sanity check but slows annotation for large VCFs.
+      Requires --fasta to be set. Useful when the provenance of the VCF is uncertain.
+    category: "Cache"
+
+  # ── Performance ─────────────────────────────────────────────────────────────
+  fork:
+    type: int
+    label: "Parallel Forks (--fork)"
+    default: 4
+    min: 1
+    max: 64
+    description: >
+      Number of parallel annotation processes. VEP forks this many processes and
+      divides the input VCF among them.
+      Scales well up to ~8 forks on typical workstations.
+      Use (available_cores - 1) to leave one core for I/O and the parent process.
+    category: "Performance"
+
+  buffer_size:
+    type: int
+    label: "Buffer Size (--buffer_size)"
+    default: 5000
+    min: 100
+    description: >
+      Number of variants processed per annotation batch (per fork).
+      Larger values reduce I/O overhead but increase memory use.
+      Default 5000 is appropriate for most WES runs.
+      For WGS or very large VCFs, increase to 10000–20000 if RAM allows (~1 GB per 10000).
+      For low-memory environments, reduce to 1000.
+    category: "Performance"
+
+  # ── Transcript Selection ────────────────────────────────────────────────────
+  canonical:
+    type: bool
+    label: "Flag Canonical Transcript (--canonical)"
+    default: true
+    description: >
+      Mark the canonical Ensembl transcript for each gene with CANONICAL=YES.
+      Canonical transcripts are defined by Ensembl based on longest CDS, highest TSL, etc.
+      Used by --pick and --flag_pick_allele to select the primary consequence.
+    category: "Transcripts"
+
+  mane:
+    type: bool
+    label: "MANE Select / Clinical (--mane)"
+    default: true
+    description: >
+      Add MANE_SELECT and MANE_PLUS_CLINICAL flags to transcripts matching the
+      MANE Select or MANE Plus Clinical transcript sets.
+      MANE (Matched Annotation from NCBI and EBI) provides one representative transcript
+      per gene agreed upon by both Ensembl and RefSeq — the preferred choice for clinical
+      variant reporting in ClinVar, ClinGen, and ACMG guidelines.
+    category: "Transcripts"
+
+  tsl:
+    type: bool
+    label: "Transcript Support Level (--tsl)"
+    default: true
+    description: >
+      Add Ensembl Transcript Support Level (TSL) score (1–5 or NA) to each transcript.
+      TSL1: supported by multiple non-suspect ESTs/mRNAs. TSL5: no RNA evidence.
+      Used as a quality filter to prefer well-supported transcripts in --pick_order.
+    category: "Transcripts"
+
+  appris:
+    type: bool
+    label: "APPRIS Principal Isoform (--appris)"
+    default: true
+    description: >
+      Add APPRIS annotation flags identifying the principal functional isoform per gene.
+      APPRIS1: clear principal isoform. APPRIS2-5: decreasing evidence.
+      Useful for selecting the functionally most relevant transcript in clinical reports.
+    category: "Transcripts"
+
+  ccds:
+    type: bool
+    label: "CCDS Identifiers (--ccds)"
+    default: true
+    description: >
+      Add the Consensus CDS (CCDS) project identifier for each matched transcript.
+      CCDS transcripts are jointly validated by NCBI, Ensembl, and UCSC.
+      Highly relevant for clinical interpretation — CCDS transcripts have robust evidence.
+    category: "Transcripts"
+
+  xref_refseq:
+    type: bool
+    label: "RefSeq Cross-References (--xref_refseq)"
+    default: true
+    description: >
+      Add corresponding RefSeq mRNA (NM_) and protein (NP_) identifiers to Ensembl transcripts.
+      Essential for clinical labs that report in RefSeq HGVS format but run Ensembl-based VEP.
+    category: "Transcripts"
+
+  gencode_basic:
+    type: bool
+    label: "GENCODE Basic Transcripts Only (--gencode_basic)"
+    default: false
+    description: >
+      Restrict annotation to GENCODE Basic transcript set — the subset of well-supported,
+      non-redundant Ensembl transcripts. Reduces output volume while keeping high-quality transcripts.
+      Not recommended if you need all transcripts for comprehensive clinical review.
+    category: "Transcripts"
+
+  sift:
+    type: string
+    label: "SIFT Prediction (--sift)"
+    default: "b"
+    choices: ["b", "s", "p", ""]
+    description: >
+      Include SIFT missense variant pathogenicity predictions.
+      's': score only (0–1, 0=damaging). 'p': prediction label only (tolerated/deleterious).
+      'b': both score and prediction (default, recommended). '': disable SIFT.
+      Requires cache to contain SIFT data (included in standard Ensembl cache).
+    category: "Pathogenicity"
+
+  polyphen:
+    type: string
+    label: "PolyPhen-2 Prediction (--polyphen)"
+    default: "b"
+    choices: ["b", "s", "p", ""]
+    description: >
+      Include PolyPhen-2 missense variant pathogenicity predictions (human only).
+      's': score only (0–1, 1=damaging). 'p': prediction label (benign/possibly/probably damaging).
+      'b': both score and prediction (recommended). '': disable PolyPhen-2.
+      Note: PolyPhen-2 only predicts for human missense variants.
+    category: "Pathogenicity"
+
+  # ── Consequence Selection ───────────────────────────────────────────────────
+  everything:
+    type: bool
+    label: "Enable Everything (--everything)"
+    default: false
+    description: >
+      Shortcut flag that enables ALL annotation options in a single switch:
+      --sift b --polyphen b --ccds --hgvs --symbol --numbers --domains
+      --regulatory --canonical --protein --biotype --af --af_1kg --af_gnomade
+      --af_gnomadg --max_af --pubmed --uniprot --mane --tsl --appris
+      --variant_class --gene_phenotype --check_existing.
+      Useful for comprehensive exploratory annotation. For production clinical pipelines,
+      prefer explicit flags so the pipeline is fully auditable.
+      When true, individual flags below are ignored (VEP overrides them with --everything).
+    category: "Shortcuts"
+
+  hgvs:
+    type: bool
+    label: "HGVS Notation (--hgvs)"
+    default: true
+    description: >
+      Add HGVS coding sequence (c.) and protein (p.) names following HGVS nomenclature.
+      Requires --fasta to be set (to compute sequence context for indels).
+      Essential for clinical variant reports and for submission to ClinVar/LOVD.
+    category: "Annotation"
+
+  symbol:
+    type: bool
+    label: "Gene Symbol (--symbol)"
+    default: true
+    description: >
+      Add HGNC official gene symbol to output. Essential for human-readable reports.
+      VEP also adds HGNC_ID when using the Ensembl cache.
+    category: "Annotation"
+
+  numbers:
+    type: bool
+    label: "Exon/Intron Numbers (--numbers)"
+    default: true
+    description: >
+      Add the affected exon number (e.g. EXON=5/21) and intron number (INTRON=4/20).
+      Useful for variant interpretation and HGVS nomenclature cross-checking.
+    category: "Annotation"
+
+  domains:
+    type: bool
+    label: "Protein Domains (--domains)"
+    default: true
+    description: >
+      Annotate variants overlapping known protein domains from Pfam, PRINTS, Prosite,
+      ProDom, and SMART databases.
+      Useful for assessing functional impact of variants in critical protein regions.
+    category: "Annotation"
+
+  regulatory:
+    type: bool
+    label: "Regulatory Features (--regulatory)"
+    default: true
+    description: >
+      Annotate variants overlapping Ensembl regulatory features: promoters, enhancers,
+      CTCF binding sites, open chromatin, and transcription factor binding sites.
+      Requires the regulatory feature data in the cache (included by default).
+    category: "Annotation"
+
+  protein:
+    type: bool
+    label: "Protein Identifiers (--protein)"
+    default: true
+    description: >
+      Add Ensembl protein (ENSP) identifiers to transcript-level annotations.
+      Enables linking to UniProt, PDB, and other protein-level databases.
+    category: "Annotation"
+
+  biotype:
+    type: bool
+    label: "Transcript Biotype (--biotype)"
+    default: true
+    description: >
+      Add transcript biotype label (e.g. protein_coding, lncRNA, nonsense_mediated_decay,
+      retained_intron, processed_pseudogene) to each annotation.
+      Useful for filtering annotation results to protein-coding transcripts only.
+    category: "Annotation"
+
+  uniprot:
+    type: bool
+    label: "UniProt Identifiers (--uniprot)"
+    default: true
+    description: >
+      Add UniProt/SwissProt and UniProt/TrEMBL identifiers for the annotated protein.
+      Enables direct lookup in UniProt for functional, disease, and structural data.
+    category: "Annotation"
+
+  variant_class:
+    type: bool
+    label: "Variant Class (--variant_class)"
+    default: true
+    description: >
+      Add Sequence Ontology variant class (e.g. SNV, deletion, insertion,
+      duplication, inversion, translocation, tandem_duplication).
+      Useful for downstream filtering by variant type.
+    category: "Annotation"
+
+  gene_phenotype:
+    type: bool
+    label: "Gene Phenotypes (--gene_phenotype)"
+    default: true
+    description: >
+      Report known phenotype associations for genes overlapping the variant.
+      Sources: OMIM, ClinVar, Orphanet, COSMIC, MIM morbid.
+      Provides rapid clinical context for each annotated gene.
+    category: "Annotation"
+
+  # ── Population Frequencies ──────────────────────────────────────────────────
+  af:
+    type: bool
+    label: "1000 Genomes Global AF (--af)"
+    default: true
+    description: >
+      Add global allele frequency from the 1000 Genomes Project Phase 3 (ALL population).
+      Used for common variant filtering (e.g. AF > 0.01 → likely benign).
+    category: "Frequencies"
+
+  af_1kg:
+    type: bool
+    label: "1000 Genomes per-Population AF (--af_1kg)"
+    default: true
+    description: >
+      Add per-superpopulation allele frequencies from 1000 Genomes Phase 3:
+      AFR, AMR, EAS, EUR, SAS.
+      Useful for ancestry-specific frequency filtering.
+    category: "Frequencies"
+
+  af_gnomade:
+    type: bool
+    label: "gnomAD Exome AF (--af_gnomade)"
+    default: true
+    description: >
+      Add gnomAD exome allele frequencies (v2.1 or v3 depending on cache version).
+      Includes global AF and per-ancestry AFs (AFR, AMR, ASJ, EAS, FIN, NFE, OTH, SAS).
+      gnomAD is the primary population frequency database for clinical SNV interpretation.
+      Note: only available for GRCh37/GRCh38 human cache.
+    category: "Frequencies"
+
+  af_gnomadg:
+    type: bool
+    label: "gnomAD Genome AF (--af_gnomadg)"
+    default: true
+    description: >
+      Add gnomAD genome allele frequencies (v3.1).
+      Complements gnomAD exome frequencies; genome cohort is larger and covers
+      non-coding regions with better representation.
+    category: "Frequencies"
+
+  max_af:
+    type: bool
+    label: "Maximum Population AF (--max_af)"
+    default: true
+    description: >
+      Report the maximum allele frequency across all available population databases
+      (1000 Genomes, gnomAD exome, gnomAD genome).
+      Single-value summary for rapid common variant filtering.
+    category: "Frequencies"
+
+  # ── Consequence Filtering & Selection ──────────────────────────────────────
+  pick:
+    type: bool
+    label: "Pick One Consequence Per Variant (--pick)"
+    default: false
+    description: >
+      Output only a single consequence per variant — the most severe on the best transcript
+      (according to --pick_order criteria). All other transcripts are discarded.
+      Reduces output size dramatically; useful for summary tables.
+      WARNING: use --flag_pick_allele instead if you need all consequences available
+      but flagged, rather than removed.
+    category: "Filtering"
+
+  pick_allele:
+    type: bool
+    label: "Flag Best Per-Allele Consequence (--flag_pick_allele)"
+    default: true
+    description: >
+      Flag the single best consequence per allele (per --pick_order) with PICK=1
+      without removing other transcript rows. Allows downstream tools to use the flagged
+      consequence as the primary annotation while retaining full per-transcript detail.
+      Preferred over --pick for clinical pipelines.
+    category: "Filtering"
+
+  pick_order:
+    type: string
+    label: "Pick Priority Order (--pick_order)"
+    default: "mane_select,mane_plus_clinical,canonical,tsl,biotype,rank,ccds,length"
+    description: >
+      Comma-separated criteria used to select the best transcript when --pick or
+      --flag_pick_allele is active. Applied left to right.
+      mane_select: MANE Select transcript first (recommended for clinical).
+      mane_plus_clinical: MANE Plus Clinical transcripts.
+      canonical: Ensembl canonical transcript.
+      tsl: lowest Transcript Support Level score (1=best).
+      biotype: protein_coding preferred over non-coding.
+      rank: most severe consequence SO rank.
+      ccds: CCDS-supported transcripts preferred.
+      length: longest coding sequence.
+    category: "Filtering"
+
+  filter_common:
+    type: bool
+    label: "Filter Common Variants (--filter_common)"
+    default: false
+    description: >
+      Filter out variants with allele frequency >0.01 (1%) in 1000 Genomes.
+      A rough common-variant removal step. For more precise filtering, use
+      the max_af parameter and post-filter by the MAX_AF INFO field.
+    category: "Filtering"
+
+  per_gene:
+    type: bool
+    label: "One Consequence Per Gene (--per_gene)"
+    default: false
+    description: >
+      Output only the most severe consequence per gene per variant.
+      All consequences from other transcripts of the same gene are discarded.
+      Reduces output to one row per gene; useful for gene-level prioritisation tables.
+    category: "Filtering"
+
+  check_existing:
+    type: bool
+    label: "Check Co-Located Known Variants (--check_existing)"
+    default: true
+    description: >
+      Check whether the variant co-locates with a known variant in dbSNP, COSMIC,
+      HGMD (if licensed), and ClinVar. Adds rsIDs, SOMATIC, PHENO fields.
+      Essential for identifying known pathogenic or common variants during clinical review.
+    category: "Filtering"
+
+  exclude_null_alleles:
+    type: bool
+    label: "Exclude Null Alleles (--exclude_null_alleles)"
+    default: false
+    description: >
+      Exclude variants with null alleles (e.g. SymbolicAllele=<*>) from annotation.
+      Useful when the input VCF contains symbolic alleles from GATK GVCF that are
+      not real variant sites.
+    category: "Filtering"
+
+  allow_non_variant:
+    type: bool
+    label: "Allow Non-Variant Lines (--allow_non_variant)"
+    default: false
+    description: >
+      Pass through non-variant sites (sites with only REF allele) to the output.
+      Normally these are skipped. Useful for GVCF processing or reference block preservation.
+    category: "Filtering"
+
+  # ── HGVS & Allele Notation ──────────────────────────────────────────────────
+  shift_hgvs:
+    type: bool
+    label: "3-prime Shift HGVS Indels (--shift_hgvs 1)"
+    default: true
+    description: >
+      Right-align ambiguous indels in HGVS notation following HGVS 3-prime convention.
+      Strongly recommended for clinical variant reporting to ensure HGVS names match
+      those in databases (ClinVar, LOVD) and follow HGVS Nomenclature 2016 rules.
+    category: "HGVS"
+
+  hgvsg:
+    type: bool
+    label: "Genomic HGVS (--hgvsg)"
+    default: false
+    description: >
+      Add genomic HGVS notation (g.) in addition to coding (c.) and protein (p.).
+      Useful for variant submissions to ClinVar which require g. notation for SVs.
+    category: "HGVS"
+
+  minimal:
+    type: bool
+    label: "Minimal Allele Representation (--minimal)"
+    default: true
+    description: >
+      Convert alleles to their minimal left-aligned representation before annotation.
+      Normalises complex alleles (e.g. ATCG/ATGG → C/G at +3) to avoid annotation
+      artefacts due to left-padding or right-padding in VCFs.
+      Recommended for all VCFs from GATK or bcftools to ensure consistency.
+    category: "HGVS"
+
+  no_escape:
+    type: bool
+    label: "No URL Escape in CSQ (--no_escape)"
+    default: true
+    description: >
+      Do not URL-escape special characters (e.g. = | & ; ,) in the VCF INFO/CSQ field.
+      Improves readability and parsing. Disable only if downstream tools require escaped output.
+    category: "HGVS"
+
+  allele_number:
+    type: bool
+    label: "Allele Number Field (--allele_number)"
+    default: true
+    description: >
+      Add ALLELE_NUM field indicating which ALT allele (1-based) each consequence
+      annotation corresponds to in multi-allelic variants.
+      Essential for correctly linking consequences to alleles in multi-allelic VCF sites.
+    category: "HGVS"
+
+  total_length:
+    type: bool
+    label: "Total CDS/Protein Length (--total_length)"
+    default: true
+    description: >
+      Add total CDS length (cDNA_position) and protein length to positional fields.
+      Useful for calculating position relative to total sequence length.
+    category: "HGVS"
+
+  shift_genomic:
+    type: bool
+    label: "Shift Genomic Variants 3-prime (--shift_genomic)"
+    default: false
+    description: >
+      Right-shift all ambiguous genomic variants (including those not in coding sequence)
+      before annotation. Broader than --shift_hgvs which only affects HGVS notation.
+    category: "HGVS"
+
+  # ── Output Annotation Options ───────────────────────────────────────────────
+  pubmed:
+    type: bool
+    label: "PubMed Citations (--pubmed)"
+    default: true
+    description: >
+      Add PubMed IDs for publications that cite the co-located known variant.
+      Provides direct links to literature evidence for variant interpretation.
+    category: "Output"
+
+  failed:
+    type: bool
+    label: "Include Failed Variants (--failed 1)"
+    default: false
+    description: >
+      Include variants flagged as 'failed' by Ensembl's QC process in co-located variant
+      lookup. By default these are excluded. Enable for maximum completeness.
+    category: "Output"
+
+  af_exac:
+    type: bool
+    label: "ExAC Allele Frequencies (--af_exac)"
+    default: false
+    description: >
+      Add ExAC population allele frequencies. Note: largely superseded by gnomAD.
+      Use gnomAD frequencies (--af_gnomade/--af_gnomadg) for current analyses.
+    category: "Output"
+
+  # ── Stats ──────────────────────────────────────────────────────────────────
+  stats_file:
+    type: bool
+    label: "Generate HTML Statistics (--stats_file)"
+    default: true
+    description: >
+      Produce a summary statistics HTML report alongside the annotation output.
+      Includes: total variants annotated, consequence type distribution,
+      known/novel variant ratio, SIFT/PolyPhen distribution, variant class breakdown.
+      Viewable in a browser. Compatible with MultiQC.
+    category: "Statistics"
+
+  no_stats:
+    type: bool
+    label: "Disable Statistics (--no_stats)"
+    default: false
+    description: >
+      Skip the HTML statistics file entirely. Slightly faster for large VCFs
+      (e.g. WGS with millions of variants). Enable for batch runs where stats are not needed.
+    category: "Statistics"
+
+  force_overwrite:
+    type: bool
+    label: "Force Overwrite Output (--force_overwrite)"
+    default: true
+    description: >
+      Overwrite output files if they already exist.
+      Disable if you want VEP to refuse to overwrite existing results (safer for
+      production pipelines where accidental overwrites must be prevented).
+    category: "Statistics"
+
+  # ── Custom Annotations ──────────────────────────────────────────────────────
+  clinvar_vcf:
+    type: string
+    label: "ClinVar VCF Path (--custom)"
+    default: ""
+    description: >
+      Absolute path to bgzip-compressed ClinVar VCF with tabix index (.tbi).
+      Used with --custom to add ClinVar clinical significance, condition name, and
+      review status to each variant. Leave empty to skip ClinVar annotation.
+      Download: https://ftp.ncbi.nlm.nih.gov/pub/clinvar/vcf_GRCh38/clinvar.vcf.gz
+    category: "Custom Annotations"
+
+  clinvar_fields:
+    type: string
+    label: "ClinVar INFO Fields to Extract"
+    default: "CLNSIG,CLNREVSTAT,CLNDN,CLNDISDB,CLNHGVS,CLNVC,CLNVI"
+    description: >
+      Comma-separated list of INFO field keys from the ClinVar VCF to include in the
+      VEP output CSQ field. Key fields:
+      CLNSIG: clinical significance (Pathogenic, Likely_pathogenic, etc.).
+      CLNREVSTAT: review status (criteria_provided_multiple_submitters, etc.).
+      CLNDN: disease name(s).
+      CLNDISDB: disease database identifiers (MedGen, OMIM, Orphanet IDs).
+      CLNHGVS: HGVS expression used in ClinVar submission.
+      CLNVC: variant category (single_nucleotide_variant, deletion, etc.).
+      CLNVI: ClinVar variant identifier.
+    category: "Custom Annotations"
+
+  cadd_snv:
+    type: string
+    label: "CADD SNV Score File (plugin)"
+    default: ""
+    description: >
+      Path to CADD whole-genome SNV score file: whole_genome_SNVs.tsv.gz
+      with tabix index (.tbi). Enables the CADD VEP plugin to add CADD Phred
+      and CADD raw scores for all SNVs.
+      CADD ≥20: top 1% of variants; ≥30: top 0.1% (ACMG criteria for PP3/BP4).
+      Download from: https://cadd.gs.washington.edu/download
+    category: "Plugins"
+
+  cadd_indel:
+    type: string
+    label: "CADD InDel Score File (plugin)"
+    default: ""
+    description: >
+      Path to CADD InDels.tsv.gz with tabix index (.tbi).
+      Required alongside cadd_snv for full SNV+InDel CADD scoring.
+      Download from: https://cadd.gs.washington.edu/download
+    category: "Plugins"
+
+  revel_file:
+    type: string
+    label: "REVEL Score File (plugin)"
+    default: ""
+    description: >
+      Path to REVEL scores file: revel_with_transcript_ids.tsv.gz with tabix index.
+      REVEL is a missense pathogenicity prediction ensemble score (0–1, 1=pathogenic).
+      REVEL ≥0.75 is used as PP3 evidence in ACMG guidelines by some laboratories.
+      Download and prepare: see REVEL plugin documentation at https://github.com/Ensembl/VEP_plugins
+    category: "Plugins"
+
+  alphamissense_file:
+    type: string
+    label: "AlphaMissense Score File (plugin)"
+    default: ""
+    description: >
+      Path to AlphaMissense_hg38.tsv.gz with tabix index.
+      AlphaMissense is Google DeepMind's deep learning missense pathogenicity predictor
+      (0–1, >0.564 = likely pathogenic; <0.340 = likely benign).
+      Publication: Cheng et al. 2023 Science (doi:10.1126/science.adg7492).
+      Download: https://storage.googleapis.com/dm_alphamissense/AlphaMissense_hg38.tsv.gz
+    category: "Plugins"
+
+  spliceai_snv:
+    type: string
+    label: "SpliceAI SNV File (plugin)"
+    default: ""
+    description: >
+      Path to SpliceAI pre-scored SNV VCF: spliceai_scores.raw.snv.hg38.vcf.gz + .tbi.
+      SpliceAI predicts cryptic splice site creation/disruption for all SNVs genome-wide.
+      Delta scores ≥0.5 are strong splicing evidence (PS3/PP3 equivalent).
+      Download from Illumina BaseSpace or https://github.com/Illumina/SpliceAI
+    category: "Plugins"
+
+  spliceai_indel:
+    type: string
+    label: "SpliceAI InDel File (plugin)"
+    default: ""
+    description: >
+      Path to SpliceAI InDel VCF: spliceai_scores.raw.indel.hg38.vcf.gz + .tbi.
+      Required alongside spliceai_snv for complete SpliceAI SNV+InDel coverage.
+    category: "Plugins"
+
+  loftee_enabled:
+    type: bool
+    label: "Enable LOFTEE Plugin"
+    default: false
+    description: >
+      Enable the Loss-of-Function Transcript Effect Estimator (LOFTEE) plugin.
+      Classifies stop-gained, frameshift, and essential splice site variants as
+      high-confidence (HC) or low-confidence (LC) loss-of-function variants.
+      HC LoF corresponds to PVS1 evidence level in ACMG classification.
+      Requires: LOFTEE installed in --dir_plugins; human_ancestor FASTA; phyloCSF scores.
+      See: https://github.com/konradjk/loftee
+    category: "Plugins"
+
+  loftee_ancestor_fa:
+    type: string
+    label: "LOFTEE Human Ancestor FASTA"
+    default: ""
+    description: >
+      Path to the human ancestor FASTA used by LOFTEE for ancestral allele analysis.
+      Required when loftee_enabled=true.
+      Download: see LOFTEE GitHub repository README for GRCh38 data files.
+    category: "Plugins"
+
+  maxentscan_dir:
+    type: string
+    label: "MaxEntScan Directory (plugin)"
+    default: ""
+    description: >
+      Path to the MaxEntScan directory containing the Perl modules for maximum entropy
+      splice site scoring.
+      Adds MaxEntScan_ref and MaxEntScan_alt scores for variants in or near splice sites.
+      Critical for splice variant interpretation (evidence for PS3/BP4).
+      Download: http://genes.mit.edu/burgelab/maxent/download/
+    category: "Plugins"
+
+  utr_annotator_enabled:
+    type: bool
+    label: "Enable UTRAnnotator Plugin"
+    default: false
+    description: >
+      Enable UTRAnnotator plugin to annotate variants in 5' UTRs with effect on
+      upstream open reading frames (uORFs) — start-gained, frameshift, stop-lost in uORF.
+      Relevant for interpreting variants upstream of the main CDS.
+      Requires: UTRAnnotator plugin and uORF annotation file.
+    category: "Plugins"
+
+  dir_plugins:
+    type: string
+    label: "VEP Plugins Directory (--dir_plugins)"
+    default: ""
+    description: >
+      Path to directory containing VEP plugin Perl modules (.pm files).
+      Default: ~/.vep/Plugins (created by vep_install --AUTO p).
+      Set this if your plugins are in a non-standard location or if using
+      custom plugins not distributed with VEP.
+    category: "Plugins"
+
+  custom_annotations:
+    type: string
+    label: "Additional --custom Arguments"
+    default: ""
+    description: >
+      Extra --custom flag strings for advanced users.
+      Format: --custom file=PATH,short_name=NAME,format=FORMAT,type=TYPE,coords=0,fields=FIELD1:FIELD2
+      Supported formats: vcf, bed, bigwig, gff, gtf.
+      Types: exact (exact coordinate match), overlap (any overlap), distance (nearest feature).
+      Example: --custom file=/data/gnomad_sv.vcf.gz,short_name=gnomAD_SV,format=vcf,type=overlap,coords=0,fields=AF:AC
+      Leave empty to skip.
+    category: "Plugins"
+
+  # ── Filtering Output ────────────────────────────────────────────────────────
+  filter_string:
+    type: string
+    label: "VEP Filter Expression (--filter)"
+    default: ""
+    description: >
+      Filter output annotations using VEP filter expressions.
+      Only annotations matching the expression are written to output.
+      Examples:
+        'IMPACT is HIGH' — only high-impact consequences.
+        'Consequence is stop_gained or Consequence is frameshift_variant' — LoF only.
+        'MAX_AF < 0.01' — rare variants only.
+        'SIFT is deleterious and PolyPhen is probably_damaging' — damaging missense only.
+      Multiple filters can be chained with 'and'/'or'.
+      Leave empty to output all consequences without filtering.
+    category: "Output Filtering"
+
+inputs:
+  vcf_in:
+    type: file
+    extensions: [".vcf", ".vcf.gz", ".bcf"]
+    label: "Input VCF (SNVs/InDels)"
+    required: true
+    description: >
+      Input variant file in VCF, bgzip-compressed VCF (.vcf.gz + .tbi), or BCF format.
+      Must contain CHROM, POS, REF, ALT columns. FILTER, INFO, FORMAT optional.
+      Typically produced by GATK HaplotypeCaller, bcftools call, DeepVariant, or similar.
+      Multi-sample VCFs are supported; VEP processes all samples.
+
+outputs:
+  vcf_out:
+    type: file
+    extensions: [".vcf", ".vcf.gz", ".json", ".txt"]
+    label: "VEP Annotated Output"
+    description: >
+      VEP-annotated output in the format selected by output_format.
+      VCF: original VCF records augmented with INFO/CSQ field containing pipe-separated
+      consequence data per transcript. All original VCF columns preserved.
+      JSON: one JSON object per variant with nested consequence, colocated, and custom
+      annotation fields. Richest format for programmatic downstream processing.
+      Tab: one row per consequence per variant. Human-readable, easy to load in Excel/R.
+
+  stats_html:
+    type: file
+    extensions: [".html"]
+    label: "VEP Statistics Report (HTML)"
+    description: >
+      HTML summary report with variant statistics:
+      - Total variants annotated
+      - Consequence type distribution (pie/bar charts)
+      - Known/novel variant ratio
+      - SIFT/PolyPhen prediction distribution
+      - Coverage per chromosome
+      Generated when stats_file=true and no_stats=false.
+
+command:
+  template: |
+    set -euo pipefail
+    OUTDIR=$(dirname {vcf_out})
+    mkdir -p "$OUTDIR"
+
+    vep \
+      --input_file {vcf_in} \
+      --output_file {vcf_out} \
+      --species {species} \
+      --assembly {assembly} \
+      --fork {fork} \
+      --buffer_size {buffer_size} \
+      --dir {cache_dir} \
+      --fasta {fasta} \
+      {%- if output_format == "vcf" %} --vcf {%- endif %} \
+      {%- if output_format == "json" %} --json {%- endif %} \
+      {%- if output_format == "tab" %} --tab {%- endif %} \
+      {%- if compress_output %} --compress_output bgzip {%- endif %} \
+      {%- if offline %} --offline {%- endif %} \
+      {%- if merged %} --merged {%- endif %} \
+      {%- if refseq %} --refseq {%- endif %} \
+      {%- if check_ref %} --check_ref {%- endif %} \
+      {%- if force_overwrite %} --force_overwrite {%- endif %} \
+      {%- if everything %} --everything \
+      {%- else %} \
+        {%- if sift %} --sift {sift} {%- endif %} \
+        {%- if polyphen %} --polyphen {polyphen} {%- endif %} \
+        {%- if canonical %} --canonical {%- endif %} \
+        {%- if mane %} --mane {%- endif %} \
+        {%- if hgvs %} --hgvs {%- endif %} \
+        {%- if hgvsg %} --hgvsg {%- endif %} \
+        {%- if symbol %} --symbol {%- endif %} \
+        {%- if numbers %} --numbers {%- endif %} \
+        {%- if domains %} --domains {%- endif %} \
+        {%- if regulatory %} --regulatory {%- endif %} \
+        {%- if protein %} --protein {%- endif %} \
+        {%- if biotype %} --biotype {%- endif %} \
+        {%- if tsl %} --tsl {%- endif %} \
+        {%- if appris %} --appris {%- endif %} \
+        {%- if uniprot %} --uniprot {%- endif %} \
+        {%- if ccds %} --ccds {%- endif %} \
+        {%- if xref_refseq %} --xref_refseq {%- endif %} \
+        {%- if gencode_basic %} --gencode_basic {%- endif %} \
+        {%- if af %} --af {%- endif %} \
+        {%- if af_1kg %} --af_1kg {%- endif %} \
+        {%- if af_gnomade %} --af_gnomade {%- endif %} \
+        {%- if af_gnomadg %} --af_gnomadg {%- endif %} \
+        {%- if max_af %} --max_af {%- endif %} \
+        {%- if af_exac %} --af_exac {%- endif %} \
+        {%- if pubmed %} --pubmed {%- endif %} \
+        {%- if variant_class %} --variant_class {%- endif %} \
+        {%- if gene_phenotype %} --gene_phenotype {%- endif %} \
+        {%- if total_length %} --total_length {%- endif %} \
+        {%- if allele_number %} --allele_number {%- endif %} \
+      {%- endif %} \
+      {%- if check_existing %} --check_existing {%- endif %} \
+      {%- if filter_common %} --filter_common {%- endif %} \
+      {%- if pick %} --pick {%- endif %} \
+      {%- if pick_allele %} --flag_pick_allele {%- endif %} \
+      {%- if pick_order %} --pick_order {pick_order} {%- endif %} \
+      {%- if per_gene %} --per_gene {%- endif %} \
+      {%- if exclude_null_alleles %} --exclude_null_alleles {%- endif %} \
+      {%- if allow_non_variant %} --allow_non_variant {%- endif %} \
+      {%- if minimal %} --minimal {%- endif %} \
+      {%- if no_escape %} --no_escape {%- endif %} \
+      {%- if shift_hgvs %} --shift_hgvs 1 {%- endif %} \
+      {%- if shift_genomic %} --shift_genomic {%- endif %} \
+      {%- if failed %} --failed 1 {%- endif %} \
+      {%- if filter_string %} --filter "{filter_string}" {%- endif %} \
+      {%- if no_stats %} --no_stats {%- elif stats_file %} --stats_file {stats_html} {%- endif %} \
+      {%- if clinvar_vcf %} --custom file={clinvar_vcf},short_name=ClinVar,format=vcf,type=exact,coords=0,fields={clinvar_fields} {%- endif %} \
+      {%- if cadd_snv and cadd_indel %} --plugin CADD,{cadd_snv},{cadd_indel} \
+      {%- elif cadd_snv %} --plugin CADD,{cadd_snv} {%- endif %} \
+      {%- if revel_file %} --plugin REVEL,{revel_file} {%- endif %} \
+      {%- if alphamissense_file %} --plugin AlphaMissense,file={alphamissense_file} {%- endif %} \
+      {%- if spliceai_snv and spliceai_indel %} --plugin SpliceAI,snv={spliceai_snv},indel={spliceai_indel} \
+      {%- elif spliceai_snv %} --plugin SpliceAI,snv={spliceai_snv} {%- endif %} \
+      {%- if loftee_enabled and loftee_ancestor_fa %} --plugin LoF,loftee_path:{dir_plugins}/loftee,human_ancestor_fa:{loftee_ancestor_fa} {%- endif %} \
+      {%- if maxentscan_dir %} --plugin MaxEntScan,{maxentscan_dir} {%- endif %} \
+      {%- if utr_annotator_enabled %} --plugin UTRAnnotator {%- endif %} \
+      {%- if dir_plugins %} --dir_plugins {dir_plugins} {%- endif %} \
+      {%- if custom_annotations %} {custom_annotations} {%- endif %}
+
+    echo "[VEP] Annotation complete: {vcf_out}"
+    echo "Annotated variants:"
+    {%- if output_format == "vcf" %}
+    grep -v '^#' {vcf_out} | wc -l || true
+    {%- endif %}
+  shell: "/bin/bash"

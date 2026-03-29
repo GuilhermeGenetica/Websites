@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+
+  <assemblyIdentity
+      version="1.0.0.0"
+      processorArchitecture="amd64"
+      name="com.seqnode.agent"
+      type="win32"/>
+
+  <description>SeqNode Agent — Local execution bridge for SeqNode pipelines</description>
+
+  <!--
+    requestedExecutionLevel = asInvoker
+    Tells Windows (and AV engines) this app runs as a normal user,
+    does NOT request elevated privileges, and does NOT attempt UAC bypass.
+    Many AV heuristics flag missing or "requireAdministrator" manifests.
+  -->
+  <trustInfo xmlns="urn:schemas-microsoft-com:asm.v3">
+    <security>
+      <requestedPrivileges>
+        <requestedExecutionLevel level="asInvoker" uiAccess="false"/>
+      </requestedPrivileges>
+    </security>
+  </trustInfo>
+
+  <!--
+    Compatibility GUIDs tell Windows which OS versions this app explicitly
+    supports. Without these, Windows runs the app in a compatibility shim
+    that can trigger false-positive AV heuristics.
+  -->
+  <compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1">
+    <application>
+      <!-- Windows 11 / Windows Server 2022 -->
+      <supportedOS Id="{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}"/>
+      <!-- Windows 10 / Windows Server 2016 -->
+      <supportedOS Id="{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}"/>
+      <!-- Windows 8.1 -->
+      <supportedOS Id="{1f676c76-80e1-4239-95bb-83d0f6d0da78}"/>
+    </application>
+  </compatibility>
+
+  <!--
+    DPI awareness: PerMonitorV2 gives crisp rendering on HiDPI / 4K screens.
+    Also enables modern visual styles (themed controls via comctl32 v6).
+  -->
+  <application xmlns="urn:schemas-microsoft-com:asm.v3">
+    <windowsSettings>
+      <dpiAwareness xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">
+        PerMonitorV2, PerMonitor
+      </dpiAwareness>
+      <longPathAware xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">
+        true
+      </longPathAware>
+    </windowsSettings>
+  </application>
+
+  <!--
+    Enable visual styles (themed Windows controls) via comctl32 v6.
+    Without this, buttons and widgets render in the legacy Windows XP style.
+  -->
+  <dependency>
+    <dependentAssembly>
+      <assemblyIdentity
+          type="win32"
+          name="Microsoft.Windows.Common-Controls"
+          version="6.0.0.0"
+          processorArchitecture="*"
+          publicKeyToken="6595b64144ccf1df"
+          language="*"/>
+    </dependentAssembly>
+  </dependency>
+
+</assembly>

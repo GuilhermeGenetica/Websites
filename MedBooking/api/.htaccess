@@ -1,0 +1,23 @@
+# api/.htaccess
+
+# Desativa a autenticação básica para todos os ficheiros nesta pasta.
+# Isso é crucial para que os scripts PHP e os ficheiros HTML/JS/CSS funcionem.
+<IfModule mod_authz_core.c>
+    # Para Apache 2.4+
+    Require all granted
+</IfModule>
+<IfModule !mod_authz_core.c>
+    # Para Apache 2.2-
+    Order allow,deny
+    Allow from all
+</IfModule>
+
+# Opcional: Para evitar que o .env seja lido diretamente (boa prática)
+# Mantenha esta secção, ela é importante para a segurança do seu .env
+<Files ".env">
+    Order allow,deny
+    Deny from all
+</Files>
+
+# Garante que qualquer regra de autenticação anterior seja anulada
+Satisfy Any

@@ -1,0 +1,520 @@
+{
+  "id": "wf_cnv_exome_full_v3",
+  "name": "CNV Exome Full Pipeline v3 — SeqNode Enhanced",
+  "description": "Pipeline WES completo para análise de CNV e SNV germinal, superando o scriptGui.py em todas as fases. Inclui: QC → Alinhamento → MarkDup (marcação, não remoção) → Cobertura → CNVkit (HMM-Germline) → ExomeDepth (leave-one-out + RDS cache) → Consenso Dual-Caller (TSV + split por caller) → AnnotSV → Filtro SegDup/PAR → NOVO: GATK HaplotypeCaller → BCFtools filter → SnpEff+SnpSift (SNV). Desenhado para exoma Illumina PE com referência hg38.",
+  "version": "3.0.0",
+  "author": "SeqNode-OS",
+  "changelog": [
+    "v3.0.0 — Segmentação CNVkit trocada para hmm-germline (melhor sensibilidade em germinal WES)",
+    "v3.0.0 — Sambamba MarkDup: remove_duplicates=false; reads marcados são excluídos por GATK automaticamente mas preservados para re-análise",
+    "v3.0.0 — ExomeDepth: leave-one-out activado, RDS cache, min_num_exons=2, sex_chr_mode=auto",
+    "v3.0.0 — CNV Consensus: formato TSV enriquecido, split por caller, scores de confiança",
+    "v3.0.0 — Mosdepth: thresholds clínicos 10/20/30/50×, no_per_base para eficiência em WES",
+    "v3.0.0 — NOVA FASE 11: GATK HaplotypeCaller (SNVs + indels germinais, modo GVCF disponível)",
+    "v3.0.0 — NOVA FASE 12: BCFtools norm + filter (VCF limpo, normalizado, indexado)",
+    "v3.0.0 — NOVA FASE 13: SnpEff + SnpSift (anotação funcional HGVS + ClinVar + dbSNP)",
+    "v3.0.0 — AnnotSV: rankingScoreThreshold activado via YAML corrigido"
+  ],
+  "nodes": [
+    {
+      "id": "n01_fastp",
+      "tool_id": "fastp_qc",
+      "label": "FASE 3 — FastP QC & Trim",
+      "notes": "QC + trimming de adaptadores + correcção de overlapping + trim PolyG (NovaSeq). Produz relatórios HTML/JSON para MultiQC.",
+      "params": {
+        "threads": 8,
+        "min_length": 36,
+        "quality_threshold": 20,
+        "unqualified_percent_limit": 40,
+        "n_base_limit": 5,
+        "detect_adapter_for_pe": true,
+        "detect_adapter_for_se": false,
+        "disable_adapter_trimming": false,
+        "cut_tail": true,
+        "cut_front": false,
+        "cut_window_size": 4,
+        "cut_mean_quality": 20,
+        "trim_poly_g": true,
+        "disable_trim_poly_g": false,
+        "poly_g_min_len": 10,
+        "trim_poly_x": false,
+        "correction": true,
+        "overlap_len_require": 30,
+        "overlap_diff_limit": 5,
+        "dedup": false,
+        "low_complexity_filter": false,
+        "umi": false,
+        "report_title": "fastp QC — SAMPLE",
+        "disable_quality_filtering": false,
+        "disable_length_filtering": false
+      },
+      "inputs_map": {
+        "read1": "/data/samples/SAMPLE_R1.fastq.gz",
+        "read2": "/data/samples/SAMPLE_R2.fastq.gz"
+      },
+      "outputs_map": {
+        "out_read1": "/data/working/01_data/SAMPLE_R1.trim.fastq.gz",
+        "out_read2": "/data/working/01_data/SAMPLE_R2.trim.fastq.gz",
+        "html_report": "/data/output/reports/SAMPLE_fastp.html",
+        "json_report": "/data/output/reports/SAMPLE_fastp.json"
+      },
+      "edges": ["n02_bwa"],
+      "position": {"x": 80, "y": 340},
+      "enabled": true
+    },
+    {
+      "id": "n02_bwa",
+      "tool_id": "bwa_mem",
+      "label": "FASE 4 — BWA-MEM Alinhamento",
+      "notes": "Alinha reads trimados ao hg38 com read groups completos (@RG SM/LB/PL/PU). Pipes por samtools sort. Equivalente ao scriptGui.py FASE 4.",
+      "params": {
+        "reference_fa": "/data/references/genomes/hg38/hg38.fa",
+        "genome_build": "hg38",
+        "sample_name": "SAMPLE",
+        "library_id": "LIB001",
+        "platform": "ILLUMINA",
+        "platform_unit": "FLOWCELL.LANE.BARCODE",
+        "sequencing_center": "",
+        "run_date": "",
+        "predicted_insert_size": 0,
+        "threads": 8,
+        "sort_threads": 4,
+        "sort_memory": "2G",
+        "min_seed_length": 19,
+        "band_width": 100,
+        "mark_secondary": true,
+        "sort_output": true,
+        "output_cram": false,
+        "output_all_alignments": false,
+        "min_alignment_score": 30
+      },
+      "inputs_map": {
+        "read1": "$n01_fastp.out_read1",
+        "read2": "$n01_fastp.out_read2"
+      },
+      "outputs_map": {
+        "bam_out": "/data/working/02_bam/SAMPLE.sorted.bam",
+        "bai_out": "/data/working/02_bam/SAMPLE.sorted.bam.bai"
+      },
+      "edges": ["n03_markdup"],
+      "position": {"x": 320, "y": 340},
+      "enabled": true
+    },
+    {
+      "id": "n03_markdup",
+      "tool_id": "sambamba_markdup",
+      "label": "FASE 5 — Sambamba MarkDup",
+      "notes": "Marca duplicados PCR com flag 0x400 SEM remoção. Preserva reads duplicados para compatibilidade GATK (que os ignora automaticamente) e para re-análise futura. Indexa output automaticamente. ATENÇÃO: remove_duplicates=false é mudança deliberada vs scriptGui.py para suportar a nova rama SNV (FASE 11).",
+      "params": {
+        "threads": 8,
+        "tmpdir": "/tmp/seqnode/markdup",
+        "overflow_list_size": 200000,
+        "hash_table_size": 262144,
+        "io_buffer_size": 128,
+        "remove_duplicates": false,
+        "compression_level": 6,
+        "index_threads": 4,
+        "sort_output": true,
+        "show_progress": false,
+        "min_mapq": 0
+      },
+      "inputs_map": {
+        "bam_in": "$n02_bwa.bam_out"
+      },
+      "outputs_map": {
+        "bam_out": "/data/working/02_bam/SAMPLE.markdup.bam",
+        "bai_out": "/data/working/02_bam/SAMPLE.markdup.bam.bai"
+      },
+      "edges": ["n04_mosdepth", "n05_cnvkit", "n06_exomedepth", "n10_gatk_hc"],
+      "position": {"x": 560, "y": 340},
+      "enabled": true
+    },
+    {
+      "id": "n04_mosdepth",
+      "tool_id": "mosdepth_coverage",
+      "label": "FASE 5b — Mosdepth Cobertura QC",
+      "notes": "Cobertura rápida por regiões BED alvo com thresholds clínicos: 10×/20×/30×/50×/100×. Suprime output per-base (–no-abbrev) para eficiência em WES. Compatível com MultiQC.",
+      "params": {
+        "prefix": "SAMPLE",
+        "threads": 4,
+        "use_bed_targets": true,
+        "window_size": 0,
+        "min_base_quality": 0,
+        "min_mapping_quality": 20,
+        "flag_exclude": 1796,
+        "no_per_base": true,
+        "thresholds": "1,5,10,15,20,30,50,100",
+        "quantize": "0:5:10:20:50:500",
+        "use_median": false,
+        "reference_fa": ""
+      },
+      "inputs_map": {
+        "bam_in": "$n03_markdup.bam_out",
+        "bed_targets": "/data/references/capture_kit/targets.bed"
+      },
+      "outputs_map": {
+        "coverage_bed": "/data/output/coverage/SAMPLE.regions.bed.gz",
+        "summary_txt": "/data/output/coverage/SAMPLE.mosdepth.summary.txt",
+        "dist_txt": "/data/output/coverage/SAMPLE.mosdepth.global.dist.txt",
+        "thresholds_bed": "/data/output/coverage/SAMPLE.thresholds.bed.gz"
+      },
+      "edges": [],
+      "position": {"x": 800, "y": 100},
+      "enabled": true
+    },
+    {
+      "id": "n05_cnvkit",
+      "tool_id": "cnvkit_batch",
+      "label": "FASE 6 — CNVkit Batch + HMM-Germline",
+      "notes": "Detecção CNV por rácio log2 com segmentação HMM-Germline (melhor sensibilidade para CNVs germinais vs CBS). Modo flat reference (sem normais). Produz .cns, .cnr, scatter e VCF. Equivalente e superior ao scriptGui.py FASE 6.",
+      "params": {
+        "reference_fa": "/data/references/genomes/hg38/hg38.fa",
+        "method": "hybrid",
+        "genome_build": "hg38",
+        "threads": 8,
+        "segment_method": "hmm-germline",
+        "male_reference": false,
+        "drop_low_coverage": true,
+        "min_mapq": 0,
+        "count_reads": false,
+        "target_avg_size": 267,
+        "antitarget_avg_size": 150000,
+        "antitarget_min_size": 500,
+        "call_method": "threshold",
+        "call_thresholds": "-1.1,-0.25,0.2,0.7",
+        "ploidy": 2,
+        "purity": 1.0,
+        "scatter_plot": true,
+        "diagram_plot": true,
+        "vcf_output": true,
+        "short_names": true,
+        "cluster": false,
+        "access_file": ""
+      },
+      "inputs_map": {
+        "tumor_bams": "$n03_markdup.bam_out",
+        "normal_bams": "",
+        "target_bed": "/data/references/capture_kit/targets.bed",
+        "antitarget_bed": ""
+      },
+      "outputs_map": {
+        "cns_file": "/data/working/03_cnvkit/SAMPLE.cns",
+        "cnr_file": "/data/working/03_cnvkit/SAMPLE.cnr",
+        "vcf_out": "/data/working/03_cnvkit/SAMPLE.vcf",
+        "scatter_png": "/data/output/plots/SAMPLE.scatter.png",
+        "diagram_pdf": "/data/output/plots/SAMPLE.diagram.pdf"
+      },
+      "edges": ["n07_consensus"],
+      "position": {"x": 820, "y": 260},
+      "enabled": true
+    },
+    {
+      "id": "n06_exomedepth",
+      "tool_id": "exomedepth_cnv",
+      "label": "FASE 7 — ExomeDepth (R) leave-one-out",
+      "notes": "Detecção CNV beta-binomial. Leave-one-out automático quando múltiplas amostras, sexo auto-detectado. Cache RDS para re-análise rápida. min_num_exons=2 reduz falsos positivos single-exon. Equivalente e superior ao scriptGui.py FASE 7.",
+      "params": {
+        "reference_fa": "/data/references/genomes/hg38/hg38.fa",
+        "genome_build": "hg38",
+        "transition_probability": 0.0001,
+        "expected_cnv_length": 50000,
+        "phi_bins": 1,
+        "min_bf": 3.0,
+        "min_num_exons": 2,
+        "output_all_calls": false,
+        "use_leave_one_out": true,
+        "num_reference_samples": 0,
+        "custom_reference_bams": "",
+        "include_chr_x": true,
+        "include_chr_y": false,
+        "sex_chr_mode": "auto",
+        "min_reads_ratio_delta": 0.0,
+        "output_mode": "per_sample",
+        "save_counts_rds": true,
+        "load_counts_rds": "",
+        "save_counts_matrix_tsv": true,
+        "r_log_verbose": true,
+        "add_sample_column": true,
+        "r_seed": 42,
+        "min_target_size": 10,
+        "normalise_gc": true,
+        "max_targets_per_chrom": 0
+      },
+      "inputs_map": {
+        "bam_files": "$n03_markdup.bam_out",
+        "target_bed": "/data/references/capture_kit/targets.bed"
+      },
+      "outputs_map": {
+        "exomedepth_tsv": "/data/working/04_cnv_exomedepth/SAMPLE.ExomeDepth.tsv",
+        "r_log": "/data/output/logs/SAMPLE.exomedepth.log",
+        "counts_rds": "/data/working/04_cnv_exomedepth/exomedepth_counts.rds"
+      },
+      "edges": ["n07_consensus"],
+      "position": {"x": 820, "y": 480},
+      "enabled": true
+    },
+    {
+      "id": "n07_consensus",
+      "tool_id": "cnv_consensus",
+      "label": "FASE 8 — CNV Consensus Dual-Caller",
+      "notes": "Fusão de CNVkit + ExomeDepth em consenso unificado TSV com score de confiança 0-2 (BOTH=2). Ficheiros separados por caller. Thresholds: |log2|≥0.4 (CNVkit) e BF≥5 (ExomeDepth). Equivalente e superior ao scriptGui.py FASE 8 (cnv_ensemble.py).",
+      "params": {
+        "log2_threshold": 0.4,
+        "min_probes": 3,
+        "min_weight": 0.0,
+        "bf_threshold": 5.0,
+        "min_exons": 2,
+        "min_reads_ratio": 0.0,
+        "overlap_fraction": 0.5,
+        "require_same_type": true,
+        "merge_distance": 500,
+        "min_size_bp": 0,
+        "max_size_bp": 0,
+        "output_format": "tsv",
+        "include_single_caller": true,
+        "require_both_callers": false,
+        "annotate_genes": true,
+        "split_output_by_caller": true,
+        "chromosome_sort": "natural",
+        "add_confidence_score": true,
+        "genome_build": "GRCh38"
+      },
+      "inputs_map": {
+        "cnvkit_cns": "$n05_cnvkit.cns_file",
+        "exomedepth_tsv": "$n06_exomedepth.exomedepth_tsv"
+      },
+      "outputs_map": {
+        "consensus_bed": "/data/working/05_consensus/SAMPLE.consensus.tsv",
+        "consensus_summary": "/data/output/reports/SAMPLE.consensus_summary.txt"
+      },
+      "edges": ["n08_annotsv", "n09_filter_segdups"],
+      "position": {"x": 1080, "y": 340},
+      "enabled": true
+    },
+    {
+      "id": "n08_annotsv",
+      "tool_id": "annotsv_annotate",
+      "label": "FASE 9 — AnnotSV Anotação Clínica (CNVs)",
+      "notes": "Anotação clínica dos CNVs consenso com OMIM, ClinVar, gnomAD, DGV, scores pLI e classificação ACMG. rankingScoreThreshold=0 → reporta todos os SVs incluindo classe 3 (VUS). Equivalente ao scriptGui.py FASE 9.",
+      "params": {
+        "genome_build": "GRCh38",
+        "sv_min_size": 50,
+        "tx_file": "",
+        "output_dir": "/data/output/06_reports",
+        "ranking_score_threshold": 0.0
+      },
+      "inputs_map": {
+        "input_bed": "$n07_consensus.consensus_bed"
+      },
+      "outputs_map": {
+        "output_tsv": "/data/output/06_reports/SAMPLE.CNV.annotated.tsv",
+        "output_unannotated": "/data/output/06_reports/SAMPLE.CNV.unannotated.tsv"
+      },
+      "edges": [],
+      "position": {"x": 1340, "y": 220},
+      "enabled": true
+    },
+    {
+      "id": "n09_filter_segdups",
+      "tool_id": "bedtools_intersect",
+      "label": "FASE 10 — Filtro SegDups & PAR",
+      "notes": "Remove CNV calls que sobrepõem duplicações segmentais (genomicSuperDups_hg38) e regiões pseudoautossomais (PAR1/PAR2 chrX/chrY). Produz call set limpo para revisão clínica. Equivalente ao scriptGui.py FASE 10.",
+      "params": {
+        "mode": "subtract",
+        "require_overlap_fraction": 0.5,
+        "reciprocal": false,
+        "invert": false,
+        "write_original_a": true,
+        "write_original_b": false,
+        "window_size": 0,
+        "chromosome_sort": false,
+        "merge_distance": 0
+      },
+      "inputs_map": {
+        "file_a": "$n07_consensus.consensus_bed",
+        "file_b": "/data/references/annotation/segdups/genomicSuperDups_hg38.bed"
+      },
+      "outputs_map": {
+        "output_bed": "/data/output/06_reports/SAMPLE.CNV.filtered_noSegDups.tsv"
+      },
+      "edges": [],
+      "position": {"x": 1340, "y": 460},
+      "enabled": true
+    },
+    {
+      "id": "n10_gatk_hc",
+      "tool_id": "gatk_haplotypecaller",
+      "label": "FASE 11 — GATK HaplotypeCaller (SNVs/Indels)",
+      "notes": "NOVO — Não presente no scriptGui.py. Chamada de SNVs e indels germinais com GATK4 HaplotypeCaller. Modo GVCF para suporte a joint-genotyping multi-amostra futuro. Restrito ao BED alvo (–L) com padding de 100 bp. Requer BAM com read groups e índice .bai.",
+      "params": {
+        "reference_fa": "/data/references/genomes/hg38/hg38.fa",
+        "java_memory": "8g",
+        "java_extra_opts": "-XX:GCTimeLimit=50 -XX:GCHeapFreeLimit=10",
+        "emit_ref_confidence": "GVCF",
+        "output_mode": "EMIT_VARIANTS_ONLY",
+        "stand_call_conf": 30.0,
+        "max_alternate_alleles": 6,
+        "min_base_quality_score": 10,
+        "heterozygosity": 0.001,
+        "heterozygosity_stdev": 0.01,
+        "indel_heterozygosity": 0.000125,
+        "contamination_fraction": 0.0,
+        "dont_use_soft_clipped_bases": false,
+        "intervals": "/data/references/capture_kit/targets.bed",
+        "interval_padding": 100,
+        "exclude_intervals": "",
+        "max_reads_per_alignment_start": 50,
+        "active_probability_threshold": 0.002,
+        "assembly_region_padding": 100,
+        "kmer_size": "10,25",
+        "pair_hmm_implementation": "FASTEST_AVAILABLE",
+        "native_pair_hmm_threads": 4,
+        "minimum_mapping_quality": 20,
+        "pcr_free": false,
+        "pcr_indel_model": "CONSERVATIVE",
+        "annotation_groups": "StandardAnnotation,StandardHCAnnotation",
+        "extra_annotations": "",
+        "dbsnp_vcf": "",
+        "disable_read_filter": ""
+      },
+      "inputs_map": {
+        "bam_in": "$n03_markdup.bam_out"
+      },
+      "outputs_map": {
+        "vcf_out": "/data/working/07_snv/SAMPLE.g.vcf.gz",
+        "vcf_index": "/data/working/07_snv/SAMPLE.g.vcf.gz.tbi"
+      },
+      "edges": ["n11_bcftools"],
+      "position": {"x": 820, "y": 660},
+      "enabled": true
+    },
+    {
+      "id": "n11_bcftools",
+      "tool_id": "bcftools_filter",
+      "label": "FASE 12 — BCFtools Norm + Filter (SNVs)",
+      "notes": "NOVO — Normalização (left-align + split multi-alélicos) e filtragem de qualidade do VCF GATK. QUAL≥30, DP≥8. Produz VCF.gz bgzip + tabix indexado para SnpEff.",
+      "params": {
+        "normalize": true,
+        "reference_fa": "/data/references/genomes/hg38/hg38.fa",
+        "split_multiallelic": "-both",
+        "check_ref": "s",
+        "do_not_normalize": false,
+        "min_qual": 30.0,
+        "min_depth": 8,
+        "min_depth_format": 0,
+        "min_gq": 20,
+        "min_allele_freq": 0.0,
+        "max_allele_freq": 0.0,
+        "pass_only": true,
+        "min_alt_reads": 3,
+        "max_strand_bias": 0.0,
+        "exclude_expression": "",
+        "include_expression": "",
+        "soft_filter_name": "",
+        "filter_mode": "+",
+        "variant_type": "all",
+        "exclude_type": "",
+        "min_alleles": 2,
+        "max_alleles": 0,
+        "known_only": false,
+        "novel_only": false,
+        "output_type": "z",
+        "write_index": true,
+        "threads": 4,
+        "generate_stats": true,
+        "stats_af_bins": "0.1,0.5,1",
+        "annotate_db_vcf": "",
+        "annotate_columns": "ID",
+        "remove_info_fields": ""
+      },
+      "inputs_map": {
+        "vcf_in": "$n10_gatk_hc.vcf_out"
+      },
+      "outputs_map": {
+        "vcf_out": "/data/working/07_snv/SAMPLE.filtered.vcf.gz",
+        "filter_stats": "/data/output/reports/SAMPLE.bcftools_stats.txt"
+      },
+      "edges": ["n12_snpeff"],
+      "position": {"x": 1080, "y": 660},
+      "enabled": true
+    },
+    {
+      "id": "n12_snpeff",
+      "tool_id": "snpeff_annotate",
+      "label": "FASE 13 — SnpEff + SnpSift (Anotação SNVs)",
+      "notes": "NOVO — Anotação funcional HGVS (c./p.) de SNVs e indels com SnpEff GRCh38.p14 + ClinVar via SnpSift. Produz VCF final com campos ANN, CLNSIG, CLNDN para interpretação clínica. Transcripts canónicos MANE Select.",
+      "params": {
+        "genome_db": "GRCh38.p14",
+        "snpeff_data_dir": "",
+        "java_memory": "8g",
+        "canon_only": true,
+        "only_protein_coding": false,
+        "one_per_line": false,
+        "hgvs": true,
+        "hgvs_1_letter": false,
+        "no_downstream": true,
+        "no_upstream": true,
+        "no_intergenic": true,
+        "no_intron": false,
+        "generate_html_stats": true,
+        "csv_stats": true,
+        "output_format": "vcf",
+        "clinvar_vcf": "/data/references/annotation/clinvar/clinvar.vcf.gz",
+        "clinvar_fields": "CLNSIG,CLNREVSTAT,CLNDN,CLNDISDB,CLNHGVS,CLNVC",
+        "dbsnp_vcf": "",
+        "extra_db_vcf": "",
+        "extra_db_fields": "",
+        "snpsift_filter_expression": "",
+        "snpsift_filter_inverse": false,
+        "min_af_population": 0.0
+      },
+      "inputs_map": {
+        "vcf_in": "$n11_bcftools.vcf_out"
+      },
+      "outputs_map": {
+        "vcf_out": "/data/output/06_reports/SAMPLE.SNV.annotated.vcf",
+        "stats_html": "/data/output/reports/SAMPLE.snpeff_stats.html",
+        "stats_csv": "/data/output/reports/SAMPLE.snpeff_stats.csv",
+        "clinvar_annotated_vcf": "/data/output/06_reports/SAMPLE.SNV.clinvar.vcf"
+      },
+      "edges": [],
+      "position": {"x": 1340, "y": 660},
+      "enabled": true
+    }
+  ],
+  "global_params": {
+    "genome_build": "hg38",
+    "reference_fa": "/data/references/genomes/hg38/hg38.fa",
+    "capture_bed": "/data/references/capture_kit/targets.bed",
+    "sample_name": "SAMPLE",
+    "annotsv_share": "~/miniforge3/envs/seqnode/share/AnnotSV",
+    "clinvar_vcf": "/data/references/annotation/clinvar/clinvar.vcf.gz",
+    "segdups_bed": "/data/references/annotation/segdups/genomicSuperDups_hg38.bed"
+  },
+  "par_regions_hg38": [
+    {"chr": "chrX", "start": 60000,     "end": 2699520,   "label": "PAR1"},
+    {"chr": "chrX", "start": 154931043, "end": 155260560, "label": "PAR2"},
+    {"chr": "chrY", "start": 10000,     "end": 2781479,   "label": "PAR1"},
+    {"chr": "chrY", "start": 59034049,  "end": 59363566,  "label": "PAR2"}
+  ],
+  "pipeline_summary": {
+    "total_nodes": 12,
+    "phases": {
+      "qc_preprocessing": ["n01_fastp", "n02_bwa", "n03_markdup", "n04_mosdepth"],
+      "cnv_detection": ["n05_cnvkit", "n06_exomedepth"],
+      "cnv_reporting": ["n07_consensus", "n08_annotsv", "n09_filter_segdups"],
+      "snv_pipeline_new": ["n10_gatk_hc", "n11_bcftools", "n12_snpeff"]
+    },
+    "improvements_vs_scriptgui": {
+      "cnvkit_segmentation": "hmm-germline (vs CBS) — melhor sensibilidade germinal",
+      "markdup_strategy": "marca sem remover — compatível GATK Best Practices",
+      "exomedepth_loo": "leave-one-out automático + cache RDS para re-análise rápida",
+      "exomedepth_min_exons": "min_num_exons=2 reduz falsos positivos single-exon",
+      "consensus_format": "TSV enriquecido com log2, BF, reads_ratio + split por caller",
+      "mosdepth_thresholds": "thresholds clínicos 10/20/30/50/100× para QC de cobertura",
+      "new_snv_pipeline": "GATK HC → BCFtools filter → SnpEff+ClinVar — ausente no scriptGui.py",
+      "annotsv_ranking": "rankingScoreThreshold aplicado corretamente (fix YAML)"
+    }
+  },
+  "tags": ["exome", "cnv", "snv", "wes", "cnvkit", "hmm-germline", "exomedepth", "gatk", "annotsv", "snpeff", "full-pipeline", "clinical", "germline", "hg38"]
+}

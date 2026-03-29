@@ -1,0 +1,123 @@
+name: Build SeqNode Agent
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Compilar ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    steps:
+      - name: Obter Código Fonte
+        uses: actions/checkout@v4
+
+      - name: Limpar Binários Residuais do Repositório
+        shell: bash
+        run: |
+          rm -rf downloads
+          mkdir -p downloads
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Instalar Dependências Iniciais
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller websockets psutil
+
+      - name: Extrair Versão
+        shell: bash
+        run: |
+          VERSION=$(python -c "import config; print(config.VERSION)" 2>/dev/null || echo "1.0.0")
+          echo "APP_VERSION=$VERSION" >> $GITHUB_ENV
+
+      - name: Create Detailed README.txt
+        shell: bash
+        run: |
+          cat <<EOF > downloads/README.txt
+          ╔══════════════════════════════════════════════════════════╗
+             SeqNode Agent v${{ env.APP_VERSION }} - Installation & Security Guide
+          ╚══════════════════════════════════════════════════════════╝
+
+          This agent is the local bridge between your machine and the SeqNode-OS 
+          cloud. It allows secure execution of bioinformatics pipelines.
+
+          🛡️  1. WINDOWS INSTALLATION (Microsoft Defender)
+          ------------------------------------------------------------
+          Since this is a specialized tool, Windows SmartScreen may flag it:
+          1. Double-click the file 'seqnode-agent-v${{ env.APP_VERSION }}-windows.exe'.
+          2. If a blue box appears saying "Windows protected your PC":
+             ➔ Click on the "More info" link (under the text).
+             ➔ A new button "Run anyway" will appear. Click it.
+          3. The Agent GUI will open. Enter your Server URL and Token.
+
+
+          🍎  2. macOS INSTALLATION (Apple Gatekeeper - Universal Support)
+          ------------------------------------------------------------
+          Compatible with both Intel and Apple Silicon (M1/M2/M3) Macs.
+          1. Open the .dmg file and find the 'SeqNodeAgent' icon.
+          2. IMPORTANT: Do NOT just double-click it.
+          3. Right-Click (or Control-Click) the icon and select "Open".
+          4. A dialog will ask if you are sure. Click "Open" again.
+          5. This bypasses the security check for this app permanently.
+
+
+          🐧  3. LINUX INSTALLATION (Terminal)
+          ------------------------------------------------------------
+          You need to grant execution permissions to the binary:
+          1. Open your terminal in the folder where the file is located.
+          2. Make it executable by running:
+             $ chmod +x seqnode-agent-v${{ env.APP_VERSION }}-linux-x86_64
+          3. Launch the agent:
+             $ ./seqnode-agent-v${{ env.APP_VERSION }}-linux-x86_64
+
+
+          ⚙️  CONFIGURATION
+          ------------------------------------------------------------
+          - Server URL: Your SeqNode API endpoint (wss://...).
+          - Agent Token: Found in your SeqNode Web Dashboard under 'Settings > Agent'.
+          - Workspace: The folder where pipeline results will be stored.
+
+          ✉️  Support: seqnode@gmail.com
+          ============================================================
+          EOF
+
+      - name: Build Linux
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update && sudo apt-get install -y python3-tk
+          chmod +x build.sh
+          bash build.sh
+          mv downloads/seqnode-agent-linux-x86_64 downloads/seqnode-agent-v${{ env.APP_VERSION }}-linux-x86_64
+          
+
+      - name: Build macOS App DMG
+        if: runner.os == 'macOS'
+        run: |
+          brew install tcl-tk || true
+          chmod +x build.sh
+          bash build.sh
+          rm -f downloads/*.zip
+
+      - name: Build Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          pip install pyinstaller-versionfile
+          python -c "import pyinstaller_versionfile; pyinstaller_versionfile.create_versionfile(output_file='versionfile.txt', version='${{ env.APP_VERSION }}.0', company_name='SeqNode', file_description='SeqNode Agent Local Bridge', internal_name='seqnode-agent', legal_copyright='© SeqNode', original_filename='seqnode-agent.exe', product_name='SeqNode Agent')"
+          pyinstaller --onefile --windowed --name seqnode-agent-v${{ env.APP_VERSION }}-windows --version-file versionfile.txt --hidden-import ssl --hidden-import websockets --hidden-import websockets.legacy --hidden-import websockets.legacy.client --hidden-import websockets.legacy.server --hidden-import websockets.asyncio --hidden-import websockets.asyncio.client --hidden-import websockets.asyncio.server --hidden-import psutil --hidden-import psutil._pslinux --hidden-import psutil._psosx --hidden-import config --hidden-import executor --hidden-import monitor --hidden-import security --hidden-import ws_client --exclude-module unittest --exclude-module doctest --exclude-module pdb --exclude-module xmlrpc --exclude-module ftplib --exclude-module imaplib --exclude-module smtplib --noupx --clean agent_gui.py
+          Move-Item -Path "dist\seqnode-agent-v${{ env.APP_VERSION }}-windows.exe" -Destination "downloads\" -Force
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: seqnode-agent-v${{ env.APP_VERSION }}-${{ runner.os }}
+          path: downloads/*

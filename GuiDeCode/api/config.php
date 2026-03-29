@@ -28,7 +28,7 @@ if (!function_exists('env')) {
     }
 }
 
-define('JWT_SECRET', env('JWT_SECRET', 'gw_jwt_secret_key_2024_s3cur3_r4nd0m'));
+define('JWT_SECRET', env('JWT_SECRET', 'change_this_in_your_env_file'));
 define('JWT_EXPIRY', 86400 * 7);
 define('UPLOAD_DIR', dirname(__DIR__) . '/' . env('UPLOAD_DIR', 'uploads') . '/');
 define('FILEXPLORER_DIR', dirname(__DIR__) . '/' . env('FILEXPLORER_DIR', 'filexplorer'));

@@ -1,0 +1,1611 @@
+name: "Samtools"
+id: "samtools"
+version: "1.21"
+category: "Preprocessing"
+description: >
+  Comprehensive samtools toolkit — the standard suite for processing high-throughput
+  sequencing data in BAM, CRAM, and SAM formats.
+  Exposes ALL major subcommands via a single configurable plugin:
+  view, sort, index, merge, flagstat, stats, depth, faidx, mpileup, fastq/fasta,
+  idxstats, addreplacerg, markdup, fixmate, calmd, reheader, cat, collate,
+  consensus, coverage, ampliconclip, split, and more.
+  Parameters adapt dynamically to the selected subcommand.
+  This plugin supersedes the separate samtools_sort and samtools_index plugins —
+  all their functionality is fully covered here with additional options.
+  Citation: Danecek et al. 2021 GigaScience (doi:10.1093/gigascience/giab008).
+author: "Heng Li / samtools contributors"
+license: "MIT"
+tags: [samtools, view, sort, index, merge, flagstat, stats, depth, faidx, mpileup, fastq,
+       idxstats, markdup, fixmate, calmd, reheader, cat, collate, consensus, coverage,
+       ampliconclip, split, bam, cram, preprocessing, variant, coverage, qc, multiQC]
+
+install:
+  method: conda
+  conda_env: seqnode
+  conda_package: "samtools=1.21"
+  conda_channels: [bioconda, conda-forge, defaults]
+  binary: samtools
+  version_check: "samtools --version 2>&1 | head -1"
+  size_estimate: "~25 MB"
+  docs_url: "https://www.htslib.org/doc/samtools.html"
+  notes: >
+    Samtools is pre-installed in most bioinformatics conda environments.
+    One installation serves all subcommands (sort, index, view, flagstat, etc.).
+    For CRAM support, htslib must be able to resolve the reference FASTA — set
+    REF_PATH or REF_CACHE environment variables, or provide --reference explicitly.
+    Samtools 1.21 requires htslib >=1.21 (bundled by conda automatically).
+
+    Typical workflows using this plugin:
+      sort    → index   → flagstat   (after BWA alignment)
+      fixmate → sort    → markdup    (duplicate marking pipeline)
+      view    → sort    → index      (format conversion + organisation)
+      faidx                          (reference indexing for GATK/VEP)
+      stats / flagstat / coverage    (QC metrics, MultiQC-compatible)
+      mpileup                        (pileup for variant calling)
+      consensus                      (generate consensus FASTA from BAM)
+
+  default_paths:
+    bin_path: "~/miniforge3/envs/seqnode/bin"
+    refs_path: ""
+    lib_path: ""
+
+runtime:
+  type: conda
+  conda_env: seqnode
+
+params:
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # GENERAL
+  # ══════════════════════════════════════════════════════════════════════════
+
+  subcommand:
+    type: string
+    label: "Subcommand"
+    default: "sort"
+    choices:
+      - "view"
+      - "sort"
+      - "index"
+      - "merge"
+      - "flagstat"
+      - "stats"
+      - "depth"
+      - "faidx"
+      - "mpileup"
+      - "fastq"
+      - "fasta"
+      - "idxstats"
+      - "addreplacerg"
+      - "markdup"
+      - "fixmate"
+      - "calmd"
+      - "reheader"
+      - "cat"
+      - "collate"
+      - "consensus"
+      - "coverage"
+      - "ampliconclip"
+      - "split"
+    description: >
+      The samtools subcommand to execute. All parameters below apply selectively
+      based on which subcommand is chosen.
+      Most-used subcommands:
+        sort      — coordinate-sort or name-sort a BAM/CRAM/SAM.
+        index     — build .bai/.csi/.crai index for random access.
+        view      — filter/convert BAM/CRAM/SAM; count reads; extract regions.
+        flagstat  — quick QC summary: total reads, mapped, paired, duplicates, etc.
+        stats     — detailed per-base, GC, insert-size, and per-cycle statistics (MultiQC).
+        depth     — per-position read depth (use mosdepth_coverage for per-region QC).
+        coverage  — per-region mean/median depth (summary table, MultiQC-compatible).
+        markdup   — mark or remove PCR duplicates (requires fixmate first).
+        fixmate   — fill in mate coordinates and TLEN (required before markdup).
+        mpileup   — pileup of bases at each position for variant calling.
+        fastq     — convert BAM to FASTQ for re-alignment or QC.
+        faidx     — index or extract sequences from a FASTA reference.
+        merge     — merge multiple sorted BAM files.
+        collate   — group paired reads together without full sort (faster than -n sort).
+        consensus — generate consensus FASTA/FASTQ from a BAM alignment.
+        reheader  — replace or modify the SAM/BAM header.
+        calmd     — recalculate MD/NM tags (required for some variant callers).
+        split     — split a multi-sample BAM by @RG sample tag.
+        cat       — concatenate BAMs without re-sorting (must share the same header).
+        idxstats  — per-chromosome read count from index (fast, no re-scan needed).
+    category: "General"
+
+  threads:
+    type: int
+    label: "Threads (-@)"
+    default: 4
+    min: 0
+    max: 128
+    description: >
+      Number of additional compression/decompression threads beyond the main thread.
+      Total threads used = threads + 1.
+      Applies to: sort, view, merge, markdup, fixmate, calmd, collate, consensus,
+      fastq, fasta, coverage, depth, stats, flagstat.
+      Set 0 to use only the main thread (single-threaded mode).
+      For most operations on a standard workstation, 4–8 threads provides good
+      throughput without saturating the disk I/O bus.
+    category: "Performance"
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # OUTPUT FORMAT
+  # ══════════════════════════════════════════════════════════════════════════
+
+  output_format:
+    type: string
+    label: "Output Format (-O)"
+    default: "BAM"
+    choices: ["BAM", "CRAM", "SAM", ""]
+    description: >
+      Force the output file format.
+      'BAM': binary compressed SAM — standard for most pipelines, random-access after indexing.
+      'CRAM': reference-based lossless compression — 40–60% smaller than BAM; requires reference.
+      'SAM': uncompressed text — useful for debugging or piping to awk/grep.
+      '': auto-detect from output filename extension.
+      Used by: sort, view, merge, markdup, fixmate, calmd.
+    category: "Output"
+
+  compression_level:
+    type: int
+    label: "Compression Level (-l)"
+    default: -1
+    min: -1
+    max: 9
+    description: >
+      BAM/CRAM output compression level.
+      -1: use the default for the format (gzip level 6 for BAM).
+       0: no compression (largest file, fastest write — good for intermediate files
+          that will be immediately re-processed).
+       1: fastest compression (large file, very fast write).
+       6: balanced (default BAM level).
+       9: maximum compression (smallest, slowest — only for archival storage).
+      Used by: sort, view, markdup.
+    category: "Output"
+
+  write_index:
+    type: bool
+    label: "Write Index Alongside Output (--write-index)"
+    default: false
+    description: >
+      Automatically write a .bai/.csi/.crai index alongside the output BAM/CRAM
+      in the same single command, without a separate samtools index step.
+      Equivalent to piping sort directly into index.
+      Supported by: sort, view (samtools ≥1.12).
+      When enabled, no separate index subcommand run is needed.
+    category: "Output"
+
+  no_pg:
+    type: bool
+    label: "Do Not Add @PG Header (--no-PG)"
+    default: false
+    description: >
+      Do not append a @PG (program group) record to the BAM/SAM header.
+      By default samtools adds a @PG record tracking the command used.
+      Disable when the header must remain byte-identical to the input
+      (e.g. for checksumming or comparison workflows).
+    category: "Output"
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # REFERENCE
+  # ══════════════════════════════════════════════════════════════════════════
+
+  reference:
+    type: file
+    extensions: [".fa", ".fasta", ".fna", ".fa.gz", ".fasta.gz"]
+    label: "Reference FASTA (--reference / -T)"
+    default: ""
+    description: >
+      Path to the reference genome FASTA (must have .fai index from samtools faidx).
+      Required for:
+        CRAM input/output — without this, CRAM cannot be decoded.
+        calmd — recalculates MD/NM tags using the reference.
+        mpileup — used for BAQ calculation and reference-based filtering.
+        consensus — used for reference-guided consensus generation.
+        view with CRAM output.
+      Leave empty for BAM-only workflows that do not need reference access.
+    category: "Reference"
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # READ FILTERING (view, depth, mpileup, coverage, stats, flagstat)
+  # ══════════════════════════════════════════════════════════════════════════
+
+  region:
+    type: string
+    label: "Genomic Region"
+    default: ""
+    description: >
+      Restrict processing to a genomic region. Format: chr:start-end (1-based, inclusive).
+      Examples: 'chr1', 'chr1:1000000-2000000', 'chrX:1-155270560'.
+      Multiple regions can be space-separated (e.g. 'chr1 chr2 chrX').
+      Requires a .bai/.csi index on the input file for random access.
+      Used by: view, depth, mpileup, coverage, stats, flagstat (with -r).
+    category: "Filtering"
+
+  flag_filter_include:
+    type: string
+    label: "Required Flags (-f)"
+    default: ""
+    description: >
+      Only include reads with ALL of these SAM flags set.
+      Provide as decimal or hexadecimal (prefix 0x).
+      Common values:
+        2    — read paired and in proper pair (both mates mapped concordantly)
+        64   — first in pair (read 1 / R1)
+        128  — second in pair (read 2 / R2)
+        16   — read mapped to reverse strand
+      Example: '-f 2' selects only properly paired reads.
+      Combine: '-f 66' = first in pair AND in proper pair (64+2).
+      Leave empty to not filter by required flags.
+    category: "Filtering"
+
+  flag_filter_exclude:
+    type: string
+    label: "Excluded Flags (-F)"
+    default: ""
+    description: >
+      Exclude reads with ANY of these SAM flags set.
+      Provide as decimal or hexadecimal (prefix 0x).
+      Common values:
+        4    — unmapped
+        256  — not primary alignment (secondary)
+        512  — QC fail
+        1024 — PCR/optical duplicate
+        2048 — supplementary alignment
+      Example: '-F 1796' excludes unmapped + secondary + duplicate + QC-fail
+      (4 + 256 + 512 + 1024 = 1796) — standard for coverage calculations.
+      Leave empty to not filter by excluded flags.
+    category: "Filtering"
+
+  flag_filter_exclude_any:
+    type: string
+    label: "Exclude if ANY Flag Set (-G)"
+    default: ""
+    description: >
+      Exclude reads where ANY bit in this mask is set in the FLAG field.
+      Functionally equivalent to -F but with slightly different semantics
+      for multi-bit combinations. Useful for complex flag filtering.
+      Provide as decimal or hexadecimal.
+    category: "Filtering"
+
+  min_mapq:
+    type: int
+    label: "Min Mapping Quality (-q)"
+    default: 0
+    min: 0
+    max: 255
+    description: >
+      Minimum mapping quality (MAPQ) score. Reads with MAPQ strictly below this
+      value are excluded.
+      0: include all reads (including unmapped with MAPQ=0).
+      1: exclude unmapped reads (MAPQ=0 is assigned to unmapped reads by BWA).
+      20: high confidence mapping (≥99% correctly placed; recommended for variant calling).
+      30: very high confidence (≥99.9% correctly placed).
+    category: "Filtering"
+
+  bed_file:
+    type: file
+    extensions: [".bed", ".bed.gz"]
+    label: "Target Regions BED (-L)"
+    default: ""
+    description: >
+      Path to a BED file with target genomic intervals.
+      Only reads overlapping these intervals are processed.
+      Used by: view, depth, mpileup, coverage, stats.
+      Equivalent to providing a region list but using a BED file format.
+      Input BED must be sorted by chromosome then coordinate for best performance.
+    category: "Filtering"
+
+  read_group:
+    type: string
+    label: "Filter by Read Group (-r / -R)"
+    default: ""
+    description: >
+      Restrict output to reads belonging to a specific @RG read group.
+      -r NAME: include reads with this single RG ID.
+      -R FILE: include reads whose RG ID appears in this file (one ID per line).
+      Useful for extracting a single sample from a multi-sample BAM.
+    category: "Filtering"
+
+  tag_filter:
+    type: string
+    label: "Filter by Auxiliary Tag (-d)"
+    default: ""
+    description: >
+      Keep only reads that have the specified auxiliary tag (and optionally value).
+      Format: TAG[:VALUE] — e.g. 'RG:sample1' or just 'CB' (any value).
+      Examples: 'RG:lib1' keeps reads from library lib1.
+                'CB' keeps reads with a cell barcode tag (for single-cell data).
+    category: "Filtering"
+
+  tag_filter_exclude:
+    type: string
+    label: "Exclude by Auxiliary Tag (-D)"
+    default: ""
+    description: >
+      Exclude reads that have the specified auxiliary tag with a value found in
+      the given file. Format: TAG:FILE.
+      Example: 'BC:barcodes_exclude.txt' — removes reads whose BC tag matches
+      any line in the file.
+    category: "Filtering"
+
+  expression_filter:
+    type: string
+    label: "Filter Expression (-e)"
+    default: ""
+    description: >
+      SAMtools filter expression for complex per-read filtering.
+      Applied after flag and MAPQ filters.
+      Expression syntax examples:
+        '[NM] <= 3'                     — at most 3 mismatches
+        'mapq >= 20 && !flag.dup'       — high-quality, non-duplicate reads
+        '[AS] >= 100'                   — minimum alignment score
+        'qname =~ /^read_[0-9]+/'       — read name regex match
+        'flag.paired && flag.proper_pair && !flag.unmap'
+      Leave empty to disable expression filtering.
+    category: "Filtering"
+
+  subsample_fraction:
+    type: string
+    label: "Subsample Reads (-s)"
+    default: ""
+    description: >
+      Subsample reads at the specified fraction. Useful for downsampling
+      over-sequenced samples for testing or balanced comparisons.
+      Format: FLOAT (e.g. '0.1' for 10%) or SEED.FRAC (e.g. '42.1' for seed 42 at 10%).
+      Setting a fixed seed ensures reproducibility across runs.
+      Example: '0.5' — randomly keep 50% of reads.
+    category: "Filtering"
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # SORT SUBCOMMAND
+  # ══════════════════════════════════════════════════════════════════════════
+
+  sort_by_name:
+    type: bool
+    label: "Sort by Read Name (-n)"
+    default: false
+    description: >
+      Sort reads by query name (read name) instead of genomic coordinate.
+      Required as the first step in the fixmate → sort → markdup duplicate
+      marking pipeline: fixmate requires name-sorted input.
+      Also required by tools such as bedtools bamtobed -bedpe, and some
+      RNA-seq tools that expect name-sorted BAMs.
+      Cannot be combined with sort_by_tag or sort_by_minimiser.
+    category: "Sort"
+
+  sort_by_tag:
+    type: string
+    label: "Sort by Auxiliary Tag (-t)"
+    default: ""
+    description: >
+      Sort reads by the value of the specified auxiliary SAM tag.
+      Example: '-t CB' sorts by cell barcode tag (single-cell workflows).
+      When set, overrides coordinate and name sorting.
+      Combined with sort_by_name=false and no -n flag.
+    category: "Sort"
+
+  sort_by_minimiser:
+    type: bool
+    label: "Sort by Sequence Minimiser (-M)"
+    default: false
+    description: >
+      Sort by sequence content minimiser instead of coordinate.
+      Produces a compression-optimised sort order that improves CRAM compression
+      by grouping reads with similar sequences together.
+      Useful for producing CRAMs that compress more efficiently.
+      Not suitable for general use — downstream tools expect coordinate-sorted BAMs.
+    category: "Sort"
+
+  sort_memory:
+    type: string
+    label: "Memory per Sort Thread (-m)"
+    default: "2G"
+    description: >
+      Maximum RAM allocated per sorting thread.
+      Total sorting RAM = threads × sort_memory.
+      Examples: '2G', '768M', '4G'.
+      When the in-memory buffer is full, data is spilled to tmpdir as temporary files.
+      For WGS BAMs (>100 GB), use '4G' or more per thread.
+      For WES BAMs (<10 GB), '768M' or '1G' is sufficient.
+    category: "Sort"
+
+  sort_tmpdir:
+    type: string
+    label: "Sort Temp Directory (-T)"
+    default: ""
+    description: >
+      Prefix for temporary files written to disk when in-memory buffer is exceeded.
+      Use a fast local disk (SSD/NVMe) for best performance.
+      Example: '/scratch/tmp/sample1'. Samtools appends random suffixes automatically.
+      Leave empty to use the system default temp directory ($TMPDIR or /tmp).
+    category: "Sort"
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # INDEX SUBCOMMAND
+  # ══════════════════════════════════════════════════════════════════════════
+
+  index_format:
+    type: string
+    label: "Index Format"
+    default: "bai"
+    choices: ["bai", "csi", "crai"]
+    description: >
+      Output index format.
+      'bai': standard BAM index — supports contigs up to 512 Mb (sufficient for hg19/hg38).
+             Used by: IGV, GATK, bcftools, samtools view, mosdepth, etc.
+      'csi': coordinate-sorted index — required for contigs >512 Mb, or for BAMs
+             with large contig offsets. Produced with the -c flag.
+             Some tools do not support .csi — check compatibility.
+      'crai': CRAM index — automatically produced when indexing CRAM files.
+      Note: bai is the correct default for standard human genome BAMs (hg38 contig sizes
+      are all <512 Mb for the primary assembly chromosomes).
+    category: "Index"
+
+  index_min_shift:
+    type: int
+    label: "Min Shift for CSI Index (-m)"
+    default: 14
+    min: 1
+    max: 30
+    description: >
+      Minimum shift for CSI index (only relevant when index_format=csi).
+      Default 14 produces a standard CSI index compatible with most tools.
+      Increase to handle very large or densely covered regions.
+    category: "Index"
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # VIEW SUBCOMMAND
+  # ══════════════════════════════════════════════════════════════════════════
+
+  header_only:
+    type: bool
+    label: "Output Header Only (-H)"
+    default: false
+    description: >
+      Print only the BAM/CRAM/SAM header and exit.
+      No alignment records are output.
+      Useful for inspecting @RG (read group), @SQ (sequence dictionary), and
+      @PG (program group) records without processing the full file.
+    category: "View"
+
+  no_header:
+    type: bool
+    label: "Suppress Header (-h-)"
+    default: false
+    description: >
+      Do not include the header in SAM output (equivalent to omitting -h).
+      By default, SAM output omits the header unless explicitly requested
+      with -h. Use this flag to explicitly confirm header suppression.
+    category: "View"
+
+  include_header:
+    type: bool
+    label: "Include Header in SAM Output (-h)"
+    default: true
+    description: >
+      Include the BAM/SAM header in the output.
+      When outputting SAM format, the header is required for most downstream
+      tools. Always enable when converting BAM→SAM for processing.
+    category: "View"
+
+  count_only:
+    type: bool
+    label: "Count Reads Only (-c)"
+    default: false
+    description: >
+      Instead of outputting alignment records, print the count of reads
+      that pass all filters. Fast read counting without writing a full file.
+      Useful for QC: count mapped reads, proper pairs, duplicates, etc.
+    category: "View"
+
+  fetch_pairs:
+    type: bool
+    label: "Fetch Read Pairs (-P)"
+    default: false
+    description: >
+      When filtering by region, also fetch the mate of each selected read
+      even if the mate maps outside the specified region.
+      Important for tools that require complete read pairs.
+    category: "View"
+
+  sanitize:
+    type: bool
+    label: "Sanitize Output (--sanitize)"
+    default: false
+    description: >
+      Fix common BAM format errors during output:
+      trim read/quality sequences longer than reported read length,
+      blank out sequences when neither sequence nor quality is present.
+      Useful for processing malformed BAMs from non-standard aligners.
+    category: "View"
+
+  fast_bam:
+    type: bool
+    label: "Uncompressed BAM Output (-u)"
+    default: false
+    description: >
+      Output uncompressed BAM (-u). Equivalent to compression_level=0.
+      Useful for streaming between samtools commands via pipes, as skipping
+      compression and decompression reduces CPU overhead significantly.
+      Example: samtools view -u in.bam | samtools sort -o out.bam
+    category: "View"
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # MERGE SUBCOMMAND
+  # ══════════════════════════════════════════════════════════════════════════
+
+  merge_force_overwrite:
+    type: bool
+    label: "Force Overwrite Output (-f)"
+    default: true
+    description: >
+      Overwrite the output BAM if it already exists.
+      By default samtools merge will fail if the output file exists.
+    category: "Merge"
+
+  merge_sorted:
+    type: bool
+    label: "Input Files are Sorted (-s)"
+    default: true
+    description: >
+      Assume all input BAMs are coordinate-sorted. Enables a more efficient
+      merge algorithm. Disable only when merging name-sorted BAMs.
+    category: "Merge"
+
+  merge_header_from:
+    type: string
+    label: "Use Header from File (-h)"
+    default: ""
+    description: >
+      Use the @SQ, @RG, and @PG records from this SAM/BAM file as the output
+      header, instead of merging headers from all input files.
+      Useful when merging BAMs with incompatible headers.
+    category: "Merge"
+
+  merge_uniq_rg:
+    type: bool
+    label: "Combine Duplicate RG IDs (-c)"
+    default: false
+    description: >
+      When two input BAMs share the same @RG ID, combine them into a single
+      @RG record rather than failing. Use with caution — conflicting metadata
+      (e.g. different SM: values) will be silently merged.
+    category: "Merge"
+
+  merge_region:
+    type: string
+    label: "Merge Region (-R)"
+    default: ""
+    description: >
+      Restrict merged output to this genomic region.
+      Format: chr:start-end. All input BAMs must be indexed for region access.
+    category: "Merge"
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # MARKDUP SUBCOMMAND
+  # ══════════════════════════════════════════════════════════════════════════
+
+  markdup_remove:
+    type: bool
+    label: "Remove Duplicates (-r)"
+    default: false
+    description: >
+      Remove duplicate reads from the output instead of only marking them
+      with flag 0x400. Produces a smaller file; duplicates are permanently discarded.
+      GATK tools automatically skip flagged duplicates, so removal is equivalent
+      for variant calling. Avoid removal if you may re-process with different thresholds.
+    category: "Markdup"
+
+  markdup_stats:
+    type: bool
+    label: "Output Duplicate Statistics (-s)"
+    default: true
+    description: >
+      Print duplicate statistics to stderr: total reads, duplicates found,
+      optical duplicates, percentage duplication.
+      Compatible with MultiQC when the output is captured to a log file.
+    category: "Markdup"
+
+  markdup_optical_distance:
+    type: int
+    label: "Optical Duplicate Distance (-d)"
+    default: 2500
+    min: 0
+    description: >
+      Maximum pixel distance between read pairs to be considered optical duplicates
+      (instrument-level duplicate, not PCR duplicate).
+      0: disable optical duplicate identification.
+      100: HiSeq 2000/2500 with non-patterned (random) flowcell.
+      2500: NovaSeq 6000, HiSeq X, HiSeq 4000 with patterned flowcell.
+      Setting this correctly is important for accurate library complexity estimation.
+    category: "Markdup"
+
+  markdup_include_secondary:
+    type: bool
+    label: "Consider Secondary Alignments (-S)"
+    default: false
+    description: >
+      Mark secondary alignments (flag 0x100) as duplicates in addition to primary
+      alignments. Not recommended for standard GATK workflows.
+    category: "Markdup"
+
+  markdup_tag_only:
+    type: bool
+    label: "Tag Only — Do Not Mark Flag (-T)"
+    default: false
+    description: >
+      Add duplicate type tag (dt) to reads without setting the 0x400 duplicate SAM flag.
+      Allows downstream tools to see duplicate information without filtering them out.
+    category: "Markdup"
+
+  markdup_clear_tag:
+    type: bool
+    label: "Clear Existing DT Tags (-c)"
+    default: true
+    description: >
+      Clear any existing 'dt' duplicate type tags from the input before re-marking.
+      Recommended when re-processing previously marked BAMs.
+    category: "Markdup"
+
+  markdup_read_coord_buffer:
+    type: int
+    label: "Read Coordinate Buffer (-m)"
+    default: 100
+    description: >
+      Number of bases of buffer around read coordinates used for duplicate detection.
+      Reads within this buffer are considered candidate duplicates.
+      Increase for data with unusually high positional variance.
+    category: "Markdup"
+
+  markdup_use_template_cigar:
+    type: bool
+    label: "Use Template Cigar for Distance (-u)"
+    default: false
+    description: >
+      Use the unclipped start position of the entire template (insert) for
+      duplicate distance calculation, rather than the individual read start.
+      Can improve accuracy for read pairs with soft-clipped ends.
+    category: "Markdup"
+
+  markdup_stats_file:
+    type: string
+    label: "Duplicate Stats Output File (-f)"
+    default: ""
+    description: >
+      Write duplicate statistics to this file instead of stderr.
+      Useful for capturing metrics in automated pipelines.
+      If empty, stats are printed to stderr (when markdup_stats=true).
+    category: "Markdup"
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # FIXMATE SUBCOMMAND
+  # ══════════════════════════════════════════════════════════════════════════
+
+  fixmate_add_ms:
+    type: bool
+    label: "Add ms (mate score) Tag (-m)"
+    default: true
+    description: >
+      Add the 'ms' auxiliary tag (mate score — sum of base qualities of the mate).
+      Required by samtools markdup -S for optical duplicate detection.
+      Always enable when running fixmate before markdup.
+    category: "Fixmate"
+
+  fixmate_remove_secondary:
+    type: bool
+    label: "Remove Secondary/Supplementary (-r)"
+    default: false
+    description: >
+      Remove secondary and supplementary alignments from the output.
+      Useful for producing a clean primary-only BAM before duplicate marking.
+    category: "Fixmate"
+
+  fixmate_add_cigar:
+    type: bool
+    label: "Add MC (Mate CIGAR) Tag (-c)"
+    default: true
+    description: >
+      Add the 'MC' auxiliary tag containing the mate's CIGAR string.
+      Required by GATK MarkDuplicates and some samtools markdup features.
+      Always enable when preparing BAMs for GATK-based duplicate marking.
+    category: "Fixmate"
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # DEPTH SUBCOMMAND
+  # ══════════════════════════════════════════════════════════════════════════
+
+  depth_all_positions:
+    type: bool
+    label: "Output All Positions Including Zero (-a)"
+    default: false
+    description: >
+      Output a depth line for every base position, including those with 0 reads.
+      By default, only positions with at least 1 read are reported.
+      Warning: for WGS this produces ~3 billion lines — use mosdepth_coverage instead.
+      Useful for targeted panels where you need to verify every target position is covered.
+    category: "Depth"
+
+  depth_include_deletions:
+    type: bool
+    label: "Include Deletions in Depth (-J)"
+    default: false
+    description: >
+      Count deletions (D in CIGAR) as coverage at the deleted positions.
+      By default, deletion positions are not counted.
+      Enable for accurate coverage at sites with frequent deletions (e.g. homopolymers).
+    category: "Depth"
+
+  depth_min_base_quality:
+    type: int
+    label: "Min Base Quality for Depth (-Q)"
+    default: 0
+    min: 0
+    max: 60
+    description: >
+      Only count bases with this minimum Phred base quality towards depth.
+      0: count all bases regardless of quality.
+      20: count only bases with ≥99% base call accuracy.
+    category: "Depth"
+
+  depth_max_depth:
+    type: int
+    label: "Max Depth Cap (-m)"
+    default: 0
+    min: 0
+    description: >
+      Maximum depth reported at any single position.
+      0: no cap (report actual depth, which can exceed millions for targeted regions).
+      8000: standard cap used by GATK and bcftools (avoids pileup memory issues).
+      For WES hotspots, actual depth can exceed 10000× without a cap.
+    category: "Depth"
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # STATS SUBCOMMAND
+  # ══════════════════════════════════════════════════════════════════════════
+
+  stats_target_regions:
+    type: string
+    label: "Stats Target Regions (-t)"
+    default: ""
+    description: >
+      Path to a BED file of target regions for on-target statistics.
+      When provided, stats computes additional on-target vs off-target metrics.
+      Useful for WES QC to measure capture efficiency.
+    category: "Stats"
+
+  stats_read_length:
+    type: int
+    label: "Expected Read Length (-l)"
+    default: 0
+    min: 0
+    description: >
+      Expected read length for per-cycle statistics.
+      0: auto-detect from reads. Set explicitly for consistency across samples.
+    category: "Stats"
+
+  stats_insert_size:
+    type: int
+    label: "Max Insert Size for Distribution (-i)"
+    default: 8000
+    min: 100
+    description: >
+      Maximum insert size to include in the insert size distribution histogram.
+      8000: default, covers nearly all insert sizes for standard WES/WGS.
+    category: "Stats"
+
+  stats_gc_depth:
+    type: float
+    label: "GC Depth Window (--gc-depth)"
+    default: 20000.0
+    description: >
+      Window size in bp for GC content vs depth calculation.
+      20000: default. Increase to smooth the GC-depth curve.
+    category: "Stats"
+
+  stats_coverage_range:
+    type: string
+    label: "Coverage Range for Distribution (-c)"
+    default: "0,1000,1"
+    description: >
+      Coverage distribution range. Format: min,max,step.
+      '0,1000,1': coverage from 0 to 1000 in steps of 1 (default).
+      '0,500,5': 0 to 500 in steps of 5 (smaller output for high-depth WGS).
+    category: "Stats"
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # MPILEUP SUBCOMMAND
+  # ══════════════════════════════════════════════════════════════════════════
+
+  mpileup_min_base_quality:
+    type: int
+    label: "Min Base Quality (-Q)"
+    default: 20
+    min: 0
+    max: 60
+    description: >
+      Minimum base quality for a base to be included in the pileup.
+      20: standard for variant calling (≥99% base call accuracy).
+      0: include all bases (for debugging or coverage-only analysis).
+    category: "Mpileup"
+
+  mpileup_max_depth:
+    type: int
+    label: "Max Depth (-d)"
+    default: 8000
+    min: 1
+    description: >
+      Maximum per-position pileup depth.
+      8000: standard cap (matches GATK default).
+      For ultra-deep amplicon sequencing, increase to 100000+.
+    category: "Mpileup"
+
+  mpileup_no_baq:
+    type: bool
+    label: "Disable BAQ (-B)"
+    default: false
+    description: >
+      Disable per-base alignment quality (BAQ) recalculation.
+      BAQ reduces false SNP calls near indels but requires a reference FASTA.
+      Disable if the reference FASTA is unavailable or for speed in non-variant uses.
+    category: "Mpileup"
+
+  mpileup_ignore_rg:
+    type: bool
+    label: "Ignore Read Groups (-R)"
+    default: false
+    description: >
+      Process all reads as belonging to a single sample regardless of @RG.
+      Use for single-sample BAMs without read groups.
+    category: "Mpileup"
+
+  mpileup_output_format:
+    type: string
+    label: "Pileup Format"
+    default: "pileup"
+    choices: ["pileup", "BCF", "VCF"]
+    description: >
+      Output format for mpileup.
+      'pileup': classic text pileup (one line per position).
+      'BCF': binary pileup for piping to bcftools call.
+      'VCF': text pileup in VCF format.
+    category: "Mpileup"
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # FASTQ / FASTA SUBCOMMAND
+  # ══════════════════════════════════════════════════════════════════════════
+
+  fastq_read1_file:
+    type: string
+    label: "Read 1 Output File (-1)"
+    default: ""
+    description: >
+      Output file for read 1 (R1) in FASTQ/FASTA format.
+      For paired-end data, read 1 reads are written here.
+      If empty, all reads are written to the main output file.
+    category: "FASTQ"
+
+  fastq_read2_file:
+    type: string
+    label: "Read 2 Output File (-2)"
+    default: ""
+    description: >
+      Output file for read 2 (R2) in FASTQ/FASTA format.
+      For paired-end data, read 2 reads are written here.
+    category: "FASTQ"
+
+  fastq_singleton_file:
+    type: string
+    label: "Singletons Output File (-s)"
+    default: ""
+    description: >
+      Output file for singleton reads (whose mate is missing or filtered out).
+      If not set, singletons are discarded.
+    category: "FASTQ"
+
+  fastq_read0_file:
+    type: string
+    label: "Unpaired Reads File (-0)"
+    default: "/dev/null"
+    description: >
+      Output file for unpaired reads (not part of a read pair).
+      Default /dev/null discards them. Change to a filename to capture them.
+    category: "FASTQ"
+
+  fastq_append_read_number:
+    type: bool
+    label: "Append /1 /2 to Read Names (-N)"
+    default: false
+    description: >
+      Append /1 or /2 to read names to indicate R1 or R2.
+      Required by some tools that expect Illumina-style paired read name suffixes.
+    category: "FASTQ"
+
+  fastq_tags:
+    type: bool
+    label: "Output Aux Tags in Name (-T)"
+    default: false
+    description: >
+      Append auxiliary SAM tags to the FASTQ read name in the format
+      tag=value (space-separated). Useful for preserving barcode (CB, UB) tags
+      through re-alignment workflows.
+    category: "FASTQ"
+
+  fastq_copy_tags:
+    type: string
+    label: "Copy Tags to Header (-t)"
+    default: ""
+    description: >
+      Comma-separated list of auxiliary SAM tags to copy to the FASTQ header.
+      Example: 'RG,BC,QT' — copies read group, barcode, and quality tags.
+    category: "FASTQ"
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # FAIDX SUBCOMMAND
+  # ══════════════════════════════════════════════════════════════════════════
+
+  faidx_region:
+    type: string
+    label: "FASTA Region(s) to Extract"
+    default: ""
+    description: >
+      One or more regions to extract from the FASTA file.
+      Format: seqname:start-end (1-based, inclusive). Space-separate multiple regions.
+      Examples: 'chr1:1-1000' — extract bases 1–1000 of chr1.
+                'chr1 chr2 chrX' — extract full chromosomes.
+      When empty, faidx only builds the .fai index without extracting sequences.
+    category: "FAIDX"
+
+  faidx_reverse_complement:
+    type: bool
+    label: "Reverse Complement (-i)"
+    default: false
+    description: >
+      Output the reverse complement of extracted sequences.
+      Useful for extracting sequences from the minus strand.
+    category: "FAIDX"
+
+  faidx_mark_strand:
+    type: string
+    label: "Mark Strand in Header (--mark-strand)"
+    default: ""
+    choices: ["", "rc", "sign", "no"]
+    description: >
+      Control how strand information appears in the output FASTA header.
+      'rc': append (RC) to headers of reverse complemented sequences.
+      'sign': append (+) or (-) to all sequence headers.
+      'no': do not add strand marks (default behaviour).
+    category: "FAIDX"
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # ADDREPLACERG SUBCOMMAND
+  # ══════════════════════════════════════════════════════════════════════════
+
+  rg_line:
+    type: string
+    label: "Read Group Line to Add/Replace (-r)"
+    default: ""
+    description: >
+      Full @RG SAM header line to add or replace.
+      Escape tabs as \t in the value.
+      Example: 'ID:sample1\tSM:sample1\tPL:ILLUMINA\tLB:lib1\tPU:flowcell1.lane1'
+      Required fields: ID. Recommended: SM, PL, LB.
+      Use this to add missing read groups to BAMs from aligners that omit them.
+    category: "ReadGroup"
+
+  rg_id_override:
+    type: string
+    label: "Override @RG ID for All Reads (-w)"
+    default: ""
+    description: >
+      Set a specific @RG ID for all reads, overriding any existing RG tag.
+      Useful for merging BAMs from different pipelines that use different ID formats.
+    category: "ReadGroup"
+
+  rg_mode:
+    type: string
+    label: "Action on Existing @RG (--mode)"
+    default: "overwrite_all"
+    choices: ["overwrite_all", "orphan_only"]
+    description: >
+      'overwrite_all': apply the new @RG to all reads regardless of existing tags.
+      'orphan_only': only add/fix RG tags for reads that have no RG tag.
+    category: "ReadGroup"
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # CALMD SUBCOMMAND
+  # ══════════════════════════════════════════════════════════════════════════
+
+  calmd_baq:
+    type: bool
+    label: "Recalculate BAQ (-A)"
+    default: false
+    description: >
+      Recalculate per-base alignment quality (BAQ) in addition to MD/NM tags.
+      BAQ downweights bases near indels to reduce false SNP calls.
+      Requires the reference FASTA to be set.
+    category: "Calmd"
+
+  calmd_extended_baq:
+    type: bool
+    label: "Use Extended BAQ (-E)"
+    default: false
+    description: >
+      Use extended BAQ model (sensitive mode) — increases sensitivity to SNPs
+      at the cost of slightly higher false positive rate.
+      Only relevant when calmd_baq=true.
+    category: "Calmd"
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # COLLATE SUBCOMMAND
+  # ══════════════════════════════════════════════════════════════════════════
+
+  collate_fast:
+    type: bool
+    label: "Fast Mode — No Temporary Files (-f)"
+    default: false
+    description: >
+      Use fast in-memory collation without writing temporary files to disk.
+      Only valid for BAMs where paired reads are close together in the file.
+      Fails if paired reads are too far apart. Use for name-sorted or nearly
+      name-sorted BAMs; for arbitrary coordinate-sorted BAMs use the default mode.
+    category: "Collate"
+
+  collate_output_format:
+    type: string
+    label: "Collate Output Format (-O)"
+    default: "BAM"
+    choices: ["BAM", "SAM", "CRAM"]
+    description: >
+      Output format for collated reads.
+      'BAM': default binary format.
+      'SAM': text format (useful for debugging).
+    category: "Collate"
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # CONSENSUS SUBCOMMAND
+  # ══════════════════════════════════════════════════════════════════════════
+
+  consensus_mode:
+    type: string
+    label: "Consensus Mode (--mode)"
+    default: "simple"
+    choices: ["simple", "bayesian"]
+    description: >
+      Algorithm for consensus base calling.
+      'simple': majority vote — the base with the most observations at each position.
+        Fast, no model assumptions.
+      'bayesian': probabilistic model using base quality scores.
+        More accurate but slower. Considers sequencing error rates.
+    category: "Consensus"
+
+  consensus_output_format:
+    type: string
+    label: "Consensus Output Format"
+    default: "fasta"
+    choices: ["fasta", "fastq"]
+    description: >
+      Output format for the consensus sequence.
+      'fasta': standard FASTA — suitable for annotation, BLAST, re-alignment.
+      'fastq': FASTA with quality scores — preserves confidence per position.
+    category: "Consensus"
+
+  consensus_min_depth:
+    type: int
+    label: "Min Depth for Consensus (-d)"
+    default: 1
+    min: 1
+    description: >
+      Minimum read depth required at a position to call a consensus base.
+      Positions with fewer reads than this threshold are reported as 'N'.
+      Set to 5 or 10 for clinical consensus calling to avoid low-confidence bases.
+    category: "Consensus"
+
+  consensus_min_mapq:
+    type: int
+    label: "Min MAPQ for Consensus (-q)"
+    default: 0
+    min: 0
+    description: >
+      Minimum mapping quality for reads contributing to the consensus.
+      0: include all reads. 20: use only confidently mapped reads.
+    category: "Consensus"
+
+  consensus_min_base_quality:
+    type: int
+    label: "Min Base Quality for Consensus (-Q)"
+    default: 20
+    min: 0
+    description: >
+      Minimum Phred base quality for a base to contribute to consensus calling.
+      20: standard clinical threshold (≥99% base call accuracy).
+    category: "Consensus"
+
+  consensus_heterozygous_bases:
+    type: bool
+    label: "Call Heterozygous Sites (-A)"
+    default: false
+    description: >
+      Use IUPAC ambiguity codes (R, Y, S, W, K, M) to represent heterozygous
+      positions in the consensus FASTA, instead of reporting only the major allele.
+    category: "Consensus"
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # COVERAGE SUBCOMMAND
+  # ══════════════════════════════════════════════════════════════════════════
+
+  coverage_histogram:
+    type: bool
+    label: "Output Histogram (-m)"
+    default: false
+    description: >
+      Output a histogram of coverage depth distribution instead of a summary table.
+      The histogram shows the number of bases at each depth level.
+    category: "Coverage"
+
+  coverage_output_depth:
+    type: bool
+    label: "Output Base Depth (-d)"
+    default: false
+    description: >
+      Output per-base depth instead of per-region summary.
+      For WGS this produces very large output — use mosdepth_coverage for efficiency.
+    category: "Coverage"
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # AMPLICONCLIP SUBCOMMAND
+  # ══════════════════════════════════════════════════════════════════════════
+
+  ampliconclip_soft:
+    type: bool
+    label: "Soft Clip Instead of Hard Clip (-s)"
+    default: true
+    description: >
+      Soft clip primer sequences instead of hard clipping.
+      Soft clipping (default) retains the sequence in the BAM; hard clipping removes it.
+      Use soft clipping for most workflows to preserve original read data.
+    category: "AmpliconClip"
+
+  ampliconclip_both_ends:
+    type: bool
+    label: "Clip Both Read Ends (-b)"
+    default: false
+    description: >
+      Attempt to clip both ends of reads (useful for tiled amplicons where
+      primers can appear at both the 5' and 3' ends of reads).
+    category: "AmpliconClip"
+
+  ampliconclip_tolerance:
+    type: int
+    label: "Primer Match Tolerance (-t)"
+    default: 5
+    min: 0
+    description: >
+      Number of bases tolerance when matching primer positions.
+      5: primers within 5 bp of the expected position are still clipped.
+      Increase for amplicons with variable primer binding positions.
+    category: "AmpliconClip"
+
+  ampliconclip_stats:
+    type: string
+    label: "Clipping Stats Output File (--stats)"
+    default: ""
+    description: >
+      Write per-amplicon clipping statistics to this file.
+      Includes: reads clipped per primer pair, bases clipped, % properly clipped.
+      Useful for QC and troubleshooting primer design issues.
+    category: "AmpliconClip"
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # SPLIT SUBCOMMAND
+  # ══════════════════════════════════════════════════════════════════════════
+
+  split_by_tag:
+    type: string
+    label: "Split by Tag (default: RG)"
+    default: ""
+    description: >
+      Split the BAM by the value of this auxiliary tag.
+      Default (empty): split by @RG ID (read group), producing one BAM per sample.
+      Set 'CB' to split by cell barcode (single-cell workflows).
+    category: "Split"
+
+  split_output_prefix:
+    type: string
+    label: "Output Filename Prefix (-f)"
+    default: ""
+    description: >
+      Printf-style filename format string for split output files.
+      Example: 'sample_%!s(MISSING).bam' — produces sample_RG001.bam, sample_RG002.bam, etc.
+      Leave empty to use the default: {input}_{RGID}.bam.
+    category: "Split"
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # CAT SUBCOMMAND
+  # ══════════════════════════════════════════════════════════════════════════
+
+  cat_header_file:
+    type: string
+    label: "Use Header from File (-h)"
+    default: ""
+    description: >
+      Use the header from this SAM/BAM file for the concatenated output.
+      By default, the header from the first input file is used.
+      Useful when the first input has an incomplete header.
+    category: "Cat"
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # ADVANCED / EXTRA ARGS
+  # ══════════════════════════════════════════════════════════════════════════
+
+  extra_args:
+    type: string
+    label: "Extra Arguments"
+    default: ""
+    description: >
+      Additional samtools arguments not covered by the parameters above.
+      Inserted after all structured parameters, before input/output file arguments.
+      Use for subcommand-specific flags not exposed in the GUI.
+      Examples: '--remove-tag OA,OC' (view), '--sanitize all' (view), '-x SA' (view).
+    category: "Advanced"
+
+  args_after_all:
+    type: string
+    label: "Arguments After All Positional Args"
+    default: ""
+    description: >
+      Extra arguments appended at the very end of the command, after input/output
+      files and region specifications. Used for trailing positional arguments
+      such as additional input BAMs in merge, or extra region strings.
+    category: "Advanced"
+
+inputs:
+  input_file:
+    type: file
+    extensions: [".bam", ".cram", ".sam", ".fa", ".fasta", ".fq", ".fastq"]
+    label: "Primary Input File"
+    required: true
+    description: >
+      Primary input file for the selected subcommand.
+      BAM/CRAM/SAM: for sort, index, view, flagstat, stats, depth, markdup, fixmate,
+        calmd, merge, fastq, collate, coverage, ampliconclip, split, cat.
+      FASTA/FA: for faidx (reference indexing and sequence extraction).
+      The file must be sorted (coordinate or name) as required by the subcommand.
+
+  input_file2:
+    type: file
+    extensions: [".bam", ".cram", ".sam", ".bai", ".bed", ".fa", ".fasta", ".txt"]
+    label: "Secondary Input (optional)"
+    required: false
+    description: >
+      Optional secondary input file. Usage depends on subcommand:
+        merge: additional BAM files to merge (can list more in args_after_all).
+        reheader: the new SAM header file.
+        ampliconclip: the amplicon primer BED file.
+        cat: additional BAM files to concatenate.
+
+outputs:
+  output_file:
+    type: file
+    extensions: [".bam", ".cram", ".sam", ".fa", ".fasta", ".fq", ".fastq",
+                 ".txt", ".tsv", ".bai", ".csi", ".crai", ".pileup"]
+    label: "Output File"
+    description: >
+      Primary output file. The appropriate extension depends on the subcommand:
+        sort/view/merge/markdup/fixmate/calmd → .bam or .cram
+        index → .bai, .csi, or .crai
+        flagstat/stats/depth/coverage/idxstats → .txt or .tsv
+        fastq/fasta → .fastq.gz or .fasta
+        faidx → .fa or .fasta
+        mpileup → .pileup or .bcf
+        consensus → .fasta or .fastq
+
+command:
+  template: |
+    set -euo pipefail
+
+    {%- if subcommand == "sort" %}
+    samtools sort \
+      -@ {threads} \
+      -m {sort_memory} \
+      {%- if output_format %} -O {output_format} {%- endif %} \
+      {%- if compression_level >= 0 %} -l {compression_level} {%- endif %} \
+      {%- if sort_by_name %} -n \
+      {%- elif sort_by_tag %} -t {sort_by_tag} \
+      {%- elif sort_by_minimiser %} -M {%- endif %} \
+      {%- if sort_tmpdir %} -T {sort_tmpdir} {%- endif %} \
+      {%- if write_index %} --write-index {%- endif %} \
+      {%- if no_pg %} --no-PG {%- endif %} \
+      {%- if extra_args %} {extra_args} {%- endif %} \
+      -o {output_file} \
+      {input_file} \
+      {%- if args_after_all %} {args_after_all} {%- endif %}
+
+    {%- elif subcommand == "index" %}
+    samtools index \
+      -@ {threads} \
+      {%- if index_format == "csi" %} -c -m {index_min_shift} \
+      {%- elif index_format == "crai" %} -c {%- endif %} \
+      {%- if extra_args %} {extra_args} {%- endif %} \
+      {input_file} \
+      {%- if output_file %} {output_file} {%- endif %}
+
+    {%- elif subcommand == "view" %}
+    samtools view \
+      -@ {threads} \
+      {%- if output_format %} -O {output_format} {%- endif %} \
+      {%- if compression_level >= 0 %} -l {compression_level} {%- endif %} \
+      {%- if fast_bam %} -u {%- endif %} \
+      {%- if header_only %} -H \
+      {%- else %} \
+        {%- if include_header %} -h {%- endif %} \
+        {%- if count_only %} -c {%- endif %} \
+      {%- endif %} \
+      {%- if flag_filter_include %} -f {flag_filter_include} {%- endif %} \
+      {%- if flag_filter_exclude %} -F {flag_filter_exclude} {%- endif %} \
+      {%- if flag_filter_exclude_any %} -G {flag_filter_exclude_any} {%- endif %} \
+      {%- if min_mapq > 0 %} -q {min_mapq} {%- endif %} \
+      {%- if bed_file %} -L {bed_file} {%- endif %} \
+      {%- if read_group %} -r {read_group} {%- endif %} \
+      {%- if tag_filter %} -d {tag_filter} {%- endif %} \
+      {%- if tag_filter_exclude %} -D {tag_filter_exclude} {%- endif %} \
+      {%- if expression_filter %} -e '{expression_filter}' {%- endif %} \
+      {%- if subsample_fraction %} -s {subsample_fraction} {%- endif %} \
+      {%- if fetch_pairs %} -P {%- endif %} \
+      {%- if reference %} --reference {reference} {%- endif %} \
+      {%- if write_index %} --write-index {%- endif %} \
+      {%- if sanitize %} --sanitize {%- endif %} \
+      {%- if no_pg %} --no-PG {%- endif %} \
+      {%- if extra_args %} {extra_args} {%- endif %} \
+      -o {output_file} \
+      {input_file} \
+      {%- if region %} {region} {%- endif %} \
+      {%- if args_after_all %} {args_after_all} {%- endif %}
+
+    {%- elif subcommand == "flagstat" %}
+    samtools flagstat \
+      -@ {threads} \
+      {%- if extra_args %} {extra_args} {%- endif %} \
+      {input_file} \
+      {%- if region %} -r {region} {%- endif %} \
+      > {output_file}
+
+    {%- elif subcommand == "stats" %}
+    samtools stats \
+      -@ {threads} \
+      {%- if reference %} --reference {reference} {%- endif %} \
+      {%- if bed_file %} -t {bed_file} \
+      {%- elif stats_target_regions %} -t {stats_target_regions} {%- endif %} \
+      {%- if min_mapq > 0 %} -q {min_mapq} {%- endif %} \
+      {%- if flag_filter_include %} -f {flag_filter_include} {%- endif %} \
+      {%- if flag_filter_exclude %} -F {flag_filter_exclude} {%- endif %} \
+      {%- if stats_read_length > 0 %} -l {stats_read_length} {%- endif %} \
+      -i {stats_insert_size} \
+      --gc-depth {stats_gc_depth} \
+      -c {stats_coverage_range} \
+      {%- if extra_args %} {extra_args} {%- endif %} \
+      {input_file} \
+      {%- if region %} {region} {%- endif %} \
+      > {output_file}
+
+    {%- elif subcommand == "depth" %}
+    samtools depth \
+      -@ {threads} \
+      {%- if depth_all_positions %} -a {%- endif %} \
+      {%- if depth_include_deletions %} -J {%- endif %} \
+      {%- if depth_min_base_quality > 0 %} -Q {depth_min_base_quality} {%- endif %} \
+      {%- if min_mapq > 0 %} -q {min_mapq} {%- endif %} \
+      {%- if depth_max_depth > 0 %} -m {depth_max_depth} {%- endif %} \
+      {%- if bed_file %} -b {bed_file} {%- endif %} \
+      {%- if extra_args %} {extra_args} {%- endif %} \
+      {input_file} \
+      {%- if region %} -r {region} {%- endif %} \
+      > {output_file}
+
+    {%- elif subcommand == "coverage" %}
+    samtools coverage \
+      -@ {threads} \
+      {%- if min_mapq > 0 %} -q {min_mapq} {%- endif %} \
+      {%- if flag_filter_include %} -f {flag_filter_include} {%- endif %} \
+      {%- if flag_filter_exclude %} -F {flag_filter_exclude} {%- endif %} \
+      {%- if bed_file %} -l {bed_file} {%- endif %} \
+      {%- if coverage_histogram %} -m {%- endif %} \
+      {%- if coverage_output_depth %} -d {%- endif %} \
+      {%- if extra_args %} {extra_args} {%- endif %} \
+      -o {output_file} \
+      {input_file} \
+      {%- if region %} {region} {%- endif %}
+
+    {%- elif subcommand == "idxstats" %}
+    samtools idxstats \
+      {%- if extra_args %} {extra_args} {%- endif %} \
+      {input_file} \
+      > {output_file}
+
+    {%- elif subcommand == "merge" %}
+    samtools merge \
+      -@ {threads} \
+      {%- if output_format %} -O {output_format} {%- endif %} \
+      {%- if merge_force_overwrite %} -f {%- endif %} \
+      {%- if merge_header_from %} -h {merge_header_from} {%- endif %} \
+      {%- if merge_uniq_rg %} -c {%- endif %} \
+      {%- if merge_region %} -R {merge_region} {%- endif %} \
+      {%- if write_index %} --write-index {%- endif %} \
+      {%- if no_pg %} --no-PG {%- endif %} \
+      {%- if extra_args %} {extra_args} {%- endif %} \
+      {output_file} \
+      {input_file} \
+      {%- if input_file2 %} {input_file2} {%- endif %} \
+      {%- if args_after_all %} {args_after_all} {%- endif %}
+
+    {%- elif subcommand == "cat" %}
+    samtools cat \
+      {%- if cat_header_file %} -h {cat_header_file} {%- endif %} \
+      {%- if extra_args %} {extra_args} {%- endif %} \
+      -o {output_file} \
+      {input_file} \
+      {%- if input_file2 %} {input_file2} {%- endif %} \
+      {%- if args_after_all %} {args_after_all} {%- endif %}
+
+    {%- elif subcommand == "markdup" %}
+    samtools markdup \
+      -@ {threads} \
+      {%- if markdup_remove %} -r {%- endif %} \
+      {%- if markdup_stats %} -s {%- endif %} \
+      {%- if markdup_optical_distance > 0 %} -d {markdup_optical_distance} {%- endif %} \
+      {%- if markdup_include_secondary %} -S {%- endif %} \
+      {%- if markdup_tag_only %} -T {%- endif %} \
+      {%- if markdup_clear_tag %} -c {%- endif %} \
+      {%- if markdup_read_coord_buffer != 100 %} -m {markdup_read_coord_buffer} {%- endif %} \
+      {%- if markdup_use_template_cigar %} -u {%- endif %} \
+      {%- if markdup_stats_file %} -f {markdup_stats_file} {%- endif %} \
+      {%- if reference %} --reference {reference} {%- endif %} \
+      {%- if no_pg %} --no-PG {%- endif %} \
+      {%- if extra_args %} {extra_args} {%- endif %} \
+      {input_file} {output_file}
+
+    {%- elif subcommand == "fixmate" %}
+    samtools fixmate \
+      -@ {threads} \
+      {%- if fixmate_add_ms %} -m {%- endif %} \
+      {%- if fixmate_add_cigar %} -c {%- endif %} \
+      {%- if fixmate_remove_secondary %} -r {%- endif %} \
+      {%- if output_format %} -O {output_format} {%- endif %} \
+      {%- if no_pg %} --no-PG {%- endif %} \
+      {%- if extra_args %} {extra_args} {%- endif %} \
+      {input_file} {output_file}
+
+    {%- elif subcommand == "calmd" %}
+    samtools calmd \
+      -@ {threads} \
+      {%- if calmd_baq %} -A {%- endif %} \
+      {%- if calmd_extended_baq %} -E {%- endif %} \
+      {%- if output_format == "BAM" %} -b {%- endif %} \
+      {%- if extra_args %} {extra_args} {%- endif %} \
+      {input_file} \
+      {reference} \
+      > {output_file}
+
+    {%- elif subcommand == "reheader" %}
+    samtools reheader \
+      {%- if extra_args %} {extra_args} {%- endif %} \
+      {input_file2} \
+      {input_file} \
+      > {output_file}
+
+    {%- elif subcommand == "addreplacerg" %}
+    samtools addreplacerg \
+      -@ {threads} \
+      {%- if rg_line %} -r '{rg_line}' {%- endif %} \
+      {%- if rg_id_override %} -w {rg_id_override} {%- endif %} \
+      -m {rg_mode} \
+      {%- if output_format %} -O {output_format} {%- endif %} \
+      {%- if extra_args %} {extra_args} {%- endif %} \
+      -o {output_file} \
+      {input_file}
+
+    {%- elif subcommand == "collate" %}
+    samtools collate \
+      -@ {threads} \
+      {%- if collate_fast %} -f {%- endif %} \
+      {%- if output_format %} -O {output_format} {%- endif %} \
+      {%- if extra_args %} {extra_args} {%- endif %} \
+      -o {output_file} \
+      {input_file} \
+      {%- if sort_tmpdir %} {sort_tmpdir}/collate_tmp {%- endif %}
+
+    {%- elif subcommand == "consensus" %}
+    samtools consensus \
+      -@ {threads} \
+      --mode {consensus_mode} \
+      -d {consensus_min_depth} \
+      -q {consensus_min_mapq} \
+      -Q {consensus_min_base_quality} \
+      {%- if consensus_heterozygous_bases %} -A {%- endif %} \
+      {%- if consensus_output_format == "fastq" %} --use-qual {%- endif %} \
+      {%- if reference %} --reference {reference} {%- endif %} \
+      {%- if flag_filter_include %} -f {flag_filter_include} {%- endif %} \
+      {%- if flag_filter_exclude %} -F {flag_filter_exclude} {%- endif %} \
+      {%- if region %} -r {region} {%- endif %} \
+      {%- if extra_args %} {extra_args} {%- endif %} \
+      -o {output_file} \
+      {input_file}
+
+    {%- elif subcommand == "fastq" or subcommand == "fasta" %}
+    samtools {subcommand} \
+      -@ {threads} \
+      {%- if fastq_read1_file %} -1 {fastq_read1_file} {%- endif %} \
+      {%- if fastq_read2_file %} -2 {fastq_read2_file} {%- endif %} \
+      {%- if fastq_singleton_file %} -s {fastq_singleton_file} {%- endif %} \
+      -0 {fastq_read0_file} \
+      {%- if fastq_append_read_number %} -N {%- endif %} \
+      {%- if fastq_copy_tags %} -T {fastq_copy_tags} {%- endif %} \
+      {%- if flag_filter_include %} -f {flag_filter_include} {%- endif %} \
+      {%- if flag_filter_exclude %} -F {flag_filter_exclude} {%- endif %} \
+      {%- if extra_args %} {extra_args} {%- endif %} \
+      {input_file} \
+      > {output_file}
+
+    {%- elif subcommand == "faidx" %}
+    samtools faidx \
+      {%- if faidx_reverse_complement %} -i {%- endif %} \
+      {%- if faidx_mark_strand %} --mark-strand {faidx_mark_strand} {%- endif %} \
+      {%- if extra_args %} {extra_args} {%- endif %} \
+      {input_file} \
+      {%- if faidx_region %} {faidx_region} {%- endif %} \
+      {%- if faidx_region %} > {output_file} {%- endif %}
+
+    {%- elif subcommand == "mpileup" %}
+    samtools mpileup \
+      -@ {threads} \
+      {%- if reference %} -f {reference} {%- endif %} \
+      -Q {mpileup_min_base_quality} \
+      -d {mpileup_max_depth} \
+      {%- if mpileup_no_baq %} -B {%- endif %} \
+      {%- if mpileup_ignore_rg %} -R {%- endif %} \
+      {%- if bed_file %} -l {bed_file} {%- endif %} \
+      {%- if min_mapq > 0 %} -q {min_mapq} {%- endif %} \
+      {%- if flag_filter_exclude %} --rf {flag_filter_exclude} {%- endif %} \
+      {%- if mpileup_output_format == "BCF" %} -g \
+      {%- elif mpileup_output_format == "VCF" %} -v {%- endif %} \
+      {%- if extra_args %} {extra_args} {%- endif %} \
+      {input_file} \
+      {%- if region %} -r {region} {%- endif %} \
+      > {output_file}
+
+    {%- elif subcommand == "split" %}
+    samtools split \
+      -@ {threads} \
+      {%- if split_by_tag %} -d {split_by_tag} {%- endif %} \
+      {%- if split_output_prefix %} -f '{split_output_prefix}' {%- endif %} \
+      {%- if no_pg %} --no-PG {%- endif %} \
+      {%- if extra_args %} {extra_args} {%- endif %} \
+      {input_file} \
+      {%- if args_after_all %} {args_after_all} {%- endif %}
+
+    {%- elif subcommand == "ampliconclip" %}
+    samtools ampliconclip \
+      -@ {threads} \
+      {%- if ampliconclip_soft %} -s {%- endif %} \
+      {%- if ampliconclip_both_ends %} -b {%- endif %} \
+      -t {ampliconclip_tolerance} \
+      {%- if ampliconclip_stats %} --stats {ampliconclip_stats} {%- endif %} \
+      {%- if no_pg %} --no-PG {%- endif %} \
+      {%- if extra_args %} {extra_args} {%- endif %} \
+      -b {input_file2} \
+      -o {output_file} \
+      {input_file}
+
+    {%- else %}
+    samtools {subcommand} \
+      -@ {threads} \
+      {%- if reference %} --reference {reference} {%- endif %} \
+      {%- if extra_args %} {extra_args} {%- endif %} \
+      -o {output_file} \
+      {input_file} \
+      {%- if args_after_all %} {args_after_all} {%- endif %}
+    {%- endif %}
+
+    echo "[samtools {subcommand}] Complete: {output_file}"
+  shell: "/bin/bash"

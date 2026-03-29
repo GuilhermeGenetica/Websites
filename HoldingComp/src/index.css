@@ -1,0 +1,675 @@
+/* File: src/index.css */
+/* Este ficheiro é uma cópia exata do seu styles.css original.
+  O Vite irá injetá-lo globalmente.
+*/
+:root {
+    --bg-color-dark: rgba(12, 20, 45, 0.9);
+    --text-color-dark: rgb(217, 226, 236);
+    --accent-dark: rgba(28, 37, 65, 0.9);
+    --halo-dark: rgba(28, 37, 65, 0.6); /* Sombra suavizada */
+    --bg-color-light: rgba(229, 244, 255, 0.9);
+    --text-color-light: rgb(28, 37, 65);
+    --accent-light: rgba(199, 206, 220, 0.9);
+    --halo-light: rgba(58, 90, 152, 0.7); /* Sombra suavizada */
+}
+
+body {
+    margin: 0;
+    font-family: 'Montserrat', sans-serif;
+    font-size: 18px;
+    line-height: 1.6;
+    background-color: var(--bg-color-dark);
+    color: var(--text-color-dark);
+    overflow-x: hidden;
+    transition: background-color 0.3s ease, color 0.3s ease;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 200vh;
+}
+
+/* Adiciona a classe light-theme ao body, como no original */
+body.light-theme {
+    background-color: var(--bg-color-light);
+    color: var(--text-color-light);
+}
+
+body.light-theme .navbar {
+    background-color: var(--accent-light);
+}
+
+body.light-theme .navbar a {
+    color: var(--text-color-light);
+}
+
+body.light-theme .content {
+    background: linear-gradient(to bottom, var(--bg-color-light), var(--bg-color-light));
+    box-shadow: 0 0 20px var(--halo-light); /* Sombra refinada */
+}
+
+body.light-theme .content:hover {
+    box-shadow: 0 5px 25px var(--halo-light); /* Sombra refinada */
+}
+
+
+body.light-theme .navbar a:hover {
+    text-shadow: 0 0 10px #ffffff, 0 0 20px #87CEFA, 0 0 30px #ffffff;
+    text-decoration-color: #fff;
+}
+
+body.light-theme .theme-toggle {
+    background-color: var(--accent-light);
+    color: var(--text-color-light);
+}
+
+body.light-theme .popup {
+    background: var(--bg-color-light);
+    color: var(--text-color-light);
+    box-shadow: 0 4px 15px var(--halo-light);
+}
+
+body.light-theme .popup-header {
+    background: var(--accent-light);
+    color: var(--text-color-light);
+}
+
+body.light-theme .close-btn {
+    background: none;
+    border: none;
+    color: var(--text-color-light);
+    font-size: 22px;
+    cursor: pointer;
+    text-shadow: 0px 0px 10px rgb(255, 0, 0); 
+}
+
+body.light-theme a {
+    background-color: var(--accent-light);
+    color: var(--text-color-light);
+    box-shadow: 0 4px 10px var(--halo-light);
+}
+
+body.light-theme a:hover {
+    background-color: var(--accent-dark);
+    color: var(--text-color-dark);
+    box-shadow: 0 6px 12px var(--halo-light);
+}
+
+body.light-theme a:active {
+    transform: translateY(2px);
+    box-shadow: 0 3px 8px var(--halo-light);
+}
+
+
+a {
+    pointer-events: auto; 
+}
+
+.navbar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 70px;
+    background-color: var(--accent-dark);
+    display: flex;
+    align-items: center;
+    justify-content: space-around;
+    box-shadow: 0 4px 12px var(--halo-dark); /* Sombra refinada */
+    transition: transform 0.3s ease, background-color 0.3s ease;
+    z-index: 1000;
+    overflow: hidden;
+    white-space: nowrap;
+}
+
+.navbar a {
+    color: var(--text-color-dark);
+    text-decoration: none;
+    padding: 0 20px;
+    font-size: 20px;
+    font-weight: 500;
+    position: relative;
+    transition: color 0.3s ease, transform 0.3s ease;
+    margin: 0 1rem;
+}
+
+
+.navbar a:hover {
+    color: var(--accent-light);
+    transform: translateY(-5px);
+    text-decoration: underline;
+    text-shadow: 0 0 10px var(--accent-light), 0 0 20px var(--accent-light), 0 0 30px var(--accent-light);
+}
+
+.navbar a::after {
+    content: '';
+    position: absolute;
+    left: 50%;
+    bottom: -3px;
+    width: 0;
+    height: 5px;
+    background-color: var(--accent-light);
+    border-radius: 5px;
+    opacity: 0.8;
+    transition: width 0.3s ease, left 0.3s ease;
+}
+
+.navbar a:hover::after {
+    width: 100%;
+    left: 0;
+}
+
+.menu-toggle {
+    display: none;
+    background: none;
+    border: none;
+    color: var(--text-color-dark);
+    font-size: 3rem;
+    cursor: pointer;
+}
+
+@media screen and (max-width: 768px) {
+    .menu-toggle {
+        display: block;
+    }
+
+    .navbar {
+        flex-direction: column;
+        align-items: flex-start;
+        height: auto;
+        padding: 10px;
+        background-color: var(--halo-dark, 0.5);
+        
+    }
+
+    .navbar a {
+        display: none;
+        width: 90%;
+        padding: 10px 20px;
+        background-color: var(--accent-dark);
+        border-bottom: 1px solid var(--halo-dark);
+        font-size: 18px;
+        margin: 5px 0; /* Margin ajustada */
+        position: relative; 
+        box-shadow: 0 10px 10px -10px rgba(0, 0, 0, 0.5);
+        border-radius: 8px; /* Bordas arredondadas */
+    }
+
+    .navbar a:last-child {
+        border-bottom: none;
+    }
+
+    .navbar.visible a {
+        display: block;
+    }
+
+    .navbar.visible {
+        box-shadow: 0 4px 15px var(--halo-dark);
+    }
+
+    
+}
+
+        /* Contêiner da seta */
+        .arrow-container {
+            position: fixed;
+            bottom: 20px;
+            left: 20px;
+            font-size: 48px;
+            font-weight: bold;
+            cursor: pointer;
+            z-index: 1000;
+            opacity: 0;
+            transition: opacity 0.3s ease-in-out;
+        }
+
+        /* Animação da seta */
+        @keyframes bounce {
+            0%, 100% {
+                transform: translateY(0);
+            }
+            50% {
+                transform: translateY(-10px);
+            }
+        }
+
+        .arrow {
+            animation: bounce 1s infinite;
+        }
+
+        /* Tornar a seta visível */
+        .arrow-container.visible {
+            opacity: 1;
+        }
+
+
+.theme-toggle-navbar {
+    /* Reset de estilos de botão */
+    background: none;
+    border: none;
+    cursor: pointer;
+    
+    /* Estilos copiados de .navbar a */
+    color: var(--text-color-dark);
+    text-decoration: none;
+    padding: 0 20px;
+    font-size: 20px;
+    font-weight: 500;
+    position: relative;
+    transition: color 0.3s ease, transform 0.3s ease;
+    margin: 0 1rem;
+    font-family: 'Montserrat', sans-serif; /* Botões não herdam a fonte por defeito */
+}
+
+/* Efeitos hover copiados de .navbar a:hover */
+.theme-toggle-navbar:hover {
+    color: var(--accent-light);
+    transform: translateY(-5px);
+    text-shadow: 0 0 10px var(--accent-light), 0 0 20px var(--accent-light), 0 0 30px var(--accent-light);
+}
+
+/* Estilos de tema claro copiados de body.light-theme .navbar a */
+body.light-theme .theme-toggle-navbar {
+    color: var(--text-color-light);
+}
+
+body.light-theme .theme-toggle-navbar:hover {
+     text-shadow: 0 0 10px #ffffff, 0 0 20px #87CEFA, 0 0 30px #ffffff;
+}
+
+
+.parallax {
+    position: relative;
+    min-height: 100vh;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background-size: cover;
+    background-position: center;
+    background-repeat: no-repeat;
+    background-attachment: fixed;
+    -webkit-background-attachment: fixed;
+}
+
+.parallax-video {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover; 
+    z-index: -1;
+    transform: translateZ(0); 
+}
+
+
+.parallax1 {
+    background-image: url('/media/back3.jpg'); 
+}
+
+.parallax2 {
+    background-image: url('/media/back4.jpg'); 
+}
+
+body.light-theme .parallax1 {
+    background-image: url('/media/back1.jpg');
+}
+
+body.light-theme .parallax2 {
+    background-image: url('/media/back2.jpg');
+}
+
+.content {
+    position: relative;
+    padding: 80px 30px;
+    margin: 20px auto;
+    max-width: 80%;
+    background: linear-gradient(to bottom, var(--bg-color-dark), var(--bg-color-dark));
+    text-align: center;
+    font-size: 20px;
+    font-weight: 400;
+    border-radius: 15px;
+    box-shadow: 0 0 20px var(--halo-dark); /* Sombra refinada */
+    transition: background-color 0.3s ease, box-shadow 0.3s ease, transform 0.3s ease; /* Transição adicionada */
+    z-index: 1; 
+}
+
+.content:hover {
+    transform: translateY(-2px); /* Efeito sutil de elevação */
+    box-shadow: 0 5px 25px var(--halo-dark); /* Sombra mais pronunciada no hover */
+}
+
+
+img {
+    max-width: 100%;
+    display: block;
+    margin: 20px 0;
+    transition: transform 0.3s ease, opacity 0.3s ease;
+}
+
+img:hover, img:active {
+    transform: scale(1.05) translateY(0);
+}
+
+.navbar.hidden {
+    transform: translateY(-100%);
+}
+
+.expanded {
+    transform: translateY(0);
+}
+
+
+button, a {
+    transition: transform 0.2s ease;
+}
+
+button:hover, a:hover {
+    transform: translateY(-3px);
+}
+
+button:active, a:active {
+    transform: translateY(2px);
+}
+
+    
+    a {
+        display: inline-block;
+        padding: 10px 20px;
+        border: none;
+        border-radius: 25px;
+        font-size: 16px;
+        font-weight: 500;
+        text-align: center;
+        text-decoration: none;
+        cursor: pointer;
+        transition: transform 0.3s ease, background-color 0.3s ease, color 0.3s ease, box-shadow 0.3s ease;
+        background-color: var(--accent-dark);
+        color: var(--text-color-dark);
+        box-shadow: 0 4px 10px var(--halo-dark);
+    }
+
+
+    /* Estilo ao passar o mouse */
+a:hover {
+    background-color: var(--accent-light);
+    color: var(--text-color-light);
+    transform: translateY(-3px);
+    box-shadow: 0 6px 12px var(--halo-dark);
+}
+
+
+a:active {
+    transform: translateY(2px);
+    box-shadow: 0 3px 8px var(--halo-dark);
+}
+
+.titles-container {
+    position: fixed;
+    bottom: 20px;
+    left: 20px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    z-index: 100;
+}
+
+.title-link {
+    cursor: pointer;
+    text-align: left;
+    display: block;
+    margin: 10px 0; 
+    color: #ffffff; 
+    text-decoration: none; 
+}
+
+.title-link:hover {
+    text-decoration: underline; 
+}
+
+
+.columns {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr); 
+    gap: 20px; 
+    justify-content: center; 
+    align-items: start; 
+    margin: 0 auto; 
+    max-width: 1200px; 
+}
+
+.column {
+    text-align: center; 
+}
+
+.popup {
+    position: fixed;
+    top: 10%;
+    width: 80%; 
+    height: 80%; 
+    background: var(--bg-color-dark);
+    color: var(--text-color-dark);
+    border-radius: 10px;
+    box-shadow: 0 4px 15px var(--halo-dark);
+    z-index: 1000;
+    display: none;
+    overflow: hidden;
+    max-width: 90%; 
+    max-height: 80vh; 
+}
+
+
+.popup-header {
+    background: var(--accent-dark);
+    padding: 10px;
+    cursor: move;
+    color: var(--text-color-dark);
+    font-weight: bold;
+    font-size: 22px;
+    border-radius: 10px 10px 0 0;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.popup-content {
+    padding: 20px;
+    font-size: 18px;
+    line-height: 1.8;
+    overflow-y: auto; 
+    max-height: calc(100% - 60px);
+    overflow-wrap: break-word;
+    word-break: break-word;
+}
+
+
+    .terms-content-wrapper {
+    font-family: Arial, sans-serif;
+    line-height: 1.6;
+    color: var(--text-color-dark); /* Usa a variável do tema */
+    }
+
+    /* Cabeçalho estilizado dentro do popup */
+    .terms-popup-header {
+    color: var(--text-color-dark);
+    padding: 20px 0;
+    text-align: center;
+    border-bottom: 1px solid var(--halo-dark); /* Adiciona uma separação */
+    }
+
+    .terms-content-wrapper h1, 
+    .terms-content-wrapper h2, 
+    .terms-content-wrapper h3 {
+    margin-top: 1.5em;
+    }
+
+    .terms-content-wrapper h1 {
+    font-size: 1.8em; /* Ligeiramente menor para caber no popup */
+    }
+
+    .terms-content-wrapper h2 {
+    font-size: 1.4em;
+    border-bottom: 2px solid var(--accent-light); /* Usa a variável do tema */
+    padding-bottom: 8px;
+    }
+
+    .terms-content-wrapper p, 
+    .terms-content-wrapper ul {
+    margin: 1em 0;
+    }
+
+    .terms-content-wrapper ul {
+    padding-left: 20px;
+    }
+
+    .terms-content-wrapper li {
+    margin-bottom: 0.5em;
+    }
+
+    /* Rodapé estilizado dentro do popup */
+    .terms-popup-footer {
+    text-align: center;
+    font-size: 0.9em;
+    color: var(--text-color-dark);
+    margin-top: 40px;
+    padding: 20px 0;
+    border-top: 1px solid var(--accent-dark);
+    }
+
+    /* Links dentro do conteúdo dos termos */
+    .terms-content-wrapper a {
+    color: var(--accent-light); /* Links com cor de destaque */
+    text-decoration: underline;
+    }
+
+    .terms-content-wrapper a:hover {
+    text-decoration: none;
+    }
+
+    /* --- Tema Claro (para o popup de termos) --- */
+    body.light-theme .terms-content-wrapper {
+    color: var(--text-color-light);
+    }
+    body.light-theme .terms-popup-header {
+    color: var(--text-color-light);
+    border-bottom-color: var(--halo-light);
+    }
+    body.light-theme .terms-content-wrapper h2 {
+    border-bottom-color: var(--accent-dark);
+    }
+    body.light-theme .terms-popup-footer {
+    color: var(--text-color-light);
+    border-top-color: var(--accent-light);
+    }
+    body.light-theme .terms-content-wrapper a {
+    color: var(--accent-dark);
+    }
+
+
+
+.close-btn {
+    background: none;
+    border: none;
+    color: var(--text-color-dark);
+    font-size: 22px;
+    cursor: pointer;
+    text-shadow: 0px 0px 10px rgb(255, 0, 0); 
+}
+
+.popup.visible {
+    display: block; 
+}
+
+#video-section {
+    position: absolute;
+    width: 100%;
+    height: 100vh; 
+    display: flex; 
+    justify-content: center; 
+    align-items: center; 
+    overflow: hidden; 
+
+}
+
+.fullscreen-video {
+    position: absolute;
+    top: 50%; 
+    left: 50%; 
+    transform: translate(-50%, -50%); 
+    width: 100%;
+    height: 100%;
+    object-fit: cover; 
+    z-index: -1; 
+}
+
+.contente {
+    position: absolute;
+    bottom: 5px;
+    right: 10px;
+    margin: 20px; 
+    text-shadow: 2px 2px 5px rgb(154, 150, 182); 
+    padding: 10px; 
+}
+
+
+
+/* --- Media Queries para Responsividade --- */
+
+/* Telas menores (tablets e celulares) */
+@media (max-width: 800px) {
+    body {
+        font-size: 16px; /* Tamanho de fonte base menor para mobile */
+    }
+
+    .content {
+        padding: 40px 20px; /* Padding reduzido */
+        max-width: 90%; /* Largura aumentada para preencher mais */
+    }
+
+    .content h1 {
+        font-size: 2.2rem; /* Ajuste de tamanho */
+    }
+    .content h2 {
+        font-size: 1.6rem; /* Ajuste de tamanho */
+    }
+
+    .responsive-table {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: center;
+    }
+
+    .responsive-table div {
+        flex: 1 1 95%;  
+        padding: 5px;  
+        box-sizing: border-box; 
+    }
+
+    .responsive-table img {
+        width: 100%;  
+        height: auto; 
+    }
+
+    .columns {
+        grid-template-columns: 1fr; /* Coluna única em mobile */
+    }
+
+    .popup {
+        width: 95%;
+        max-width: 95%;
+        height: 90vh;
+        max-height: 90vh;
+        top: 5%;
+    }
+
+    .popup-content {
+        font-size: 16px; /* Fonte menor no popup mobile */
+    }
+
+    .terms-content-wrapper h1 {
+        font-size: 1.5em;
+    }
+    .terms-content-wrapper h2 {
+        font-size: 1.2em;
+    }
+}

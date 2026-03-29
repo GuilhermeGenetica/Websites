@@ -1,0 +1,36 @@
+# ============================================================
+# .gitignore - SeqNode Agent
+# ============================================================
+
+# Pastas de compilação e distribuição (PyInstaller / Scripts)
+build/
+dist/
+downloads/
+__pycache__/
+*.egg-info/
+
+# Ficheiros de ambiente virtual e locais
+.env
+venv/
+env/
+.venv/
+
+# Ficheiros gerados pelo sistema operativo
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Ficheiros de configuração local do Agente e Logs
+.seqnode-agent/
+*.log
+*.pid
+
+# Ficheiros do PyInstaller
+*.spec
+
+# Binários e pacotes (Garantia extra)
+*.exe
+*.dmg
+*.zip
+*.tar.gz
+*.pkg

@@ -20,12 +20,8 @@ $action = $_GET['action'] ?? '';
 $basePath = realpath(__DIR__ . '/../filexplorer');
 
 if (!$basePath) {
-    // Fallback absoluto para Hostinger
-    $basePath = '/home/u262319756/domains/guilherme.onnetweb.com/public_html/filexplorer';
-    if (!is_dir($basePath)) {
-        echo json_encode(['success' => false, 'error' => 'Pasta /filexplorer/ não encontrada.']);
-        exit;
-    }
+    echo json_encode(['success' => false, 'error' => 'Pasta /filexplorer/ não encontrada.']);
+    exit;
 }
 
 // Ficheiros internos do sistema antigo que não devem aparecer

@@ -1,0 +1,334 @@
+name: "Picard MarkDuplicates"
+id: "picard_markduplicates"
+version: "3.1.1"
+category: "Preprocessing"
+description: >
+  Picard MarkDuplicates — standard PCR and optical duplicate marking for BAM files
+  following the GATK Best Practices preprocessing workflow. Identifies duplicate
+  read pairs using their 5' positions and orientation, marks them with the SAM
+  flag 0x400 (or optionally removes them), and produces detailed duplication metrics
+  including library complexity estimation, optical duplicate rates per tile, and
+  estimated library size. Essential step before GATK BaseRecalibrator and HaplotypeCaller.
+  Also provides CreateSequenceDictionary for reference preparation.
+  For faster processing on large BAMs, consider sambamba_markdup as an alternative.
+  Citation: Picard Toolkit. Broad Institute. https://broadinstitute.github.io/picard/.
+author: "Broad Institute"
+license: "MIT"
+tags: [picard, markdup, duplicates, bam, gatk, preprocessing, optical-duplicates, library-complexity]
+
+install:
+  method: conda
+  conda_env: seqnode
+  conda_package: "picard=3.1.1"
+  conda_channels: [bioconda, conda-forge, defaults]
+  binary: picard
+  version_check: "picard MarkDuplicates --version 2>&1 | head -1 || echo 'picard installed'"
+  size_estimate: "~150 MB (Java-based, includes full Picard suite)"
+  docs_url: "https://broadinstitute.github.io/picard/command-line-overview.html#MarkDuplicates"
+  notes: >
+    Picard requires Java 17+. The conda package bundles a compatible JVM.
+    Input BAM must be coordinate-sorted. Verify with: samtools view -H input.bam | grep SO.
+    Picard writes extensive temporary files — ensure TMPDIR points to a disk with
+    enough free space (~2× BAM size) and fast I/O (local SSD preferred).
+    For WGS BAMs >50 GB, increase java_memory to 16–32g to avoid GC overhead.
+    Optical duplicate detection uses pixel coordinates from read names.
+    Standard Illumina read name format: @<instrument>:<run>:<flowcell>:<lane>:<tile>:<x>:<y>
+    Optical_duplicate_pixel_distance: 100 for HiSeq2000/2500 (non-patterned flowcell),
+    2500 for NovaSeq 6000 / HiSeqX patterned flowcell.
+    Picard MarkDuplicates is equivalent to GATK MarkDuplicatesSpark (Spark-based parallel version).
+    CREATE_INDEX=true automatically creates a .bai index alongside the output BAM.
+  default_paths:
+    bin_path: "~/miniforge3/envs/seqnode/bin"
+    refs_path: ""
+    lib_path: ""
+
+runtime:
+  type: conda
+  conda_env: seqnode
+
+params:
+
+  # ── Java Runtime ───────────────────────────────────────────────────────────
+  java_memory:
+    type: string
+    label: "Java Max Heap (-Xmx)"
+    default: "8g"
+    description: >
+      Java heap memory for Picard MarkDuplicates (e.g. '8g', '16g', '32g').
+      Picard needs memory proportional to the number of records in sort order.
+      For WES: 4–8g is usually sufficient. For WGS: 8–32g.
+      Too little memory causes repeated GC pauses or OutOfMemoryError.
+    category: "Java"
+
+  java_tmpdir:
+    type: string
+    label: "Java Temp Directory (-Djava.io.tmpdir)"
+    default: "/tmp"
+    description: >
+      Directory for Java and Picard temporary files during sorting/duplicate detection.
+      Must have free space ~2× the input BAM size.
+      Use a fast local disk (SSD/NVMe) for best performance.
+    category: "Java"
+
+  # ── Duplicate Handling ─────────────────────────────────────────────────────
+  remove_duplicates:
+    type: bool
+    label: "Remove Duplicates (REMOVE_DUPLICATES)"
+    default: false
+    description: >
+      Remove duplicate reads from the output BAM instead of marking them.
+      Default is to mark with SAM flag 0x400 and keep them.
+      GATK variant callers automatically skip duplicate-flagged reads,
+      so removal is equivalent for calling purposes but produces a smaller file.
+      Consider NOT removing if you want to reprocess with different settings.
+    category: "Duplicates"
+
+  remove_sequencing_duplicates:
+    type: bool
+    label: "Remove Sequencing Duplicates (REMOVE_SEQUENCING_DUPLICATES)"
+    default: false
+    description: >
+      Remove reads identified as optical or electronic duplicates
+      (i.e., true sequencing instrument duplicates) from the output.
+      These are a subset of all duplicates. Requires optical duplicate detection.
+    category: "Duplicates"
+
+  duplicate_scoring_strategy:
+    type: string
+    label: "Duplicate Scoring Strategy (DUPLICATE_SCORING_STRATEGY)"
+    default: "SUM_OF_BASE_QUALITIES"
+    choices: ["SUM_OF_BASE_QUALITIES", "TOTAL_MAPPED_REFERENCE_LENGTH", "RANDOM"]
+    description: >
+      Scoring strategy to determine which duplicate is the 'best' (primary) read.
+      'SUM_OF_BASE_QUALITIES': highest sum of base quality scores (default, recommended).
+      'TOTAL_MAPPED_REFERENCE_LENGTH': longest aligned read is kept.
+      'RANDOM': randomly pick a primary read (for testing only).
+    category: "Duplicates"
+
+  tagging_policy:
+    type: string
+    label: "Tagging Policy (TAGGING_POLICY)"
+    default: "DontTag"
+    choices: ["DontTag", "OpticalOnly", "All"]
+    description: >
+      Controls which reads are tagged with the duplicate type (DT) SAM tag.
+      'DontTag': do not add DT tags (default, smaller BAM).
+      'OpticalOnly': tag only optical duplicates with DT:Z:O.
+      'All': tag all duplicates — optical (DT:Z:O) and PCR (DT:Z:L).
+    category: "Duplicates"
+
+  clear_dt:
+    type: bool
+    label: "Clear DT Tags (CLEAR_DT)"
+    default: true
+    description: >
+      When true, existing DT SAM tags in the input BAM are cleared before
+      re-running duplicate marking. Recommended when re-processing previously marked BAMs.
+    category: "Duplicates"
+
+  tag_duplicate_set_members:
+    type: bool
+    label: "Tag All Duplicate Set Members (TAG_DUPLICATE_SET_MEMBERS)"
+    default: false
+    description: >
+      When true, all members of a duplicate set (not just the primary) are tagged
+      with a 'DS' SAM tag indicating which read is the primary duplicate representative.
+      Useful for tools that need to identify duplicate clusters.
+    category: "Duplicates"
+
+  # ── Optical Duplicates ─────────────────────────────────────────────────────
+  optical_duplicate_pixel_distance:
+    type: int
+    label: "Optical Duplicate Pixel Distance (OPTICAL_DUPLICATE_PIXEL_DISTANCE)"
+    default: 2500
+    min: 0
+    max: 10000
+    description: >
+      Maximum pixel distance between clusters to be considered optical duplicates.
+      100: HiSeq 2000/2500 with non-patterned flowcell.
+      2500: NovaSeq 6000, HiSeq X, HiSeq 4000 with patterned flowcell.
+      Setting too low underestimates optical duplicates; too high overestimates them.
+    category: "Optical Duplicates"
+
+  max_optical_duplicate_set_size:
+    type: int
+    label: "Max Optical Dup Set Size (MAX_OPTICAL_DUPLICATE_SET_SIZE)"
+    default: 300000
+    description: >
+      Maximum number of optical duplicates allowed in a single duplicate set
+      before switching to a non-optical duplicate scoring mode.
+      Prevents out-of-memory errors for extremely deep coverage at a single position.
+    category: "Optical Duplicates"
+
+  read_name_regex:
+    type: string
+    label: "Read Name Regex (READ_NAME_REGEX)"
+    default: ""
+    description: >
+      Regular expression to extract tile/cluster coordinates from read names for
+      optical duplicate detection. Leave empty to use the default Illumina pattern.
+      Default pattern: (?:.*:)?([0-9]+)[^:]*:([0-9]+)[^:]*:([0-9]+)[^:]*$
+      Custom format example: '^([0-9]+)_([0-9]+)_([0-9]+)$'
+      Set to 'null' to disable optical duplicate detection entirely.
+    category: "Optical Duplicates"
+
+  # ── Sorting ────────────────────────────────────────────────────────────────
+  assume_sorted:
+    type: bool
+    label: "Assume Sorted (ASSUME_SORTED)"
+    default: true
+    description: >
+      Skip the sort order validation check on the input BAM header.
+      Faster when you are confident the input is coordinate-sorted.
+      If the input is not actually sorted, results will be incorrect without error.
+    category: "Sorting"
+
+  sorting_collection_size_ratio:
+    type: float
+    label: "Sorting Collection Size Ratio (SORTING_COLLECTION_SIZE_RATIO)"
+    default: 0.25
+    description: >
+      Fraction of Java max heap allocated to the sorting collection.
+      0.25 = 25% of heap. For 8g heap: ~2g for sorting.
+      Increase to 0.5 if you have available RAM to reduce disk spilling.
+    category: "Sorting"
+
+  # ── Output Options ─────────────────────────────────────────────────────────
+  create_index:
+    type: bool
+    label: "Create Index (CREATE_INDEX)"
+    default: true
+    description: >
+      Automatically write a .bai index alongside the output BAM.
+      Required for most downstream tools (GATK, IGV, mosdepth, etc.).
+    category: "Output"
+
+  create_md5_file:
+    type: bool
+    label: "Create MD5 File (CREATE_MD5_FILE)"
+    default: false
+    description: >
+      Create an MD5 checksum file (.md5) for the output BAM.
+      Useful for data integrity verification before archiving.
+    category: "Output"
+
+  compression_level:
+    type: int
+    label: "BAM Compression Level (COMPRESSION_LEVEL)"
+    default: 5
+    min: 0
+    max: 9
+    description: >
+      BAM output compression level (0=none, 1=fastest, 9=best).
+      Default 5 is a good balance of size and speed.
+      0 is useful for intermediate files when decompression overhead matters.
+    category: "Output"
+
+  # ── Validation ─────────────────────────────────────────────────────────────
+  validation_stringency:
+    type: string
+    label: "Validation Stringency (VALIDATION_STRINGENCY)"
+    default: "LENIENT"
+    choices: ["STRICT", "LENIENT", "SILENT"]
+    description: >
+      How strictly to validate BAM records during reading.
+      'STRICT': throw exceptions on any SAM/BAM format errors.
+      'LENIENT': warn but continue on errors (default, recommended for real-world data).
+      'SILENT': ignore all errors (use only if you know the data is safe).
+    category: "Validation"
+
+  max_file_handles:
+    type: int
+    label: "Max File Handles (MAX_FILE_HANDLES_FOR_READ_ENDS_MAP)"
+    default: 8000
+    description: >
+      Maximum number of file handles to use for temporary sort files.
+      Lower this value if you hit OS-level file descriptor limits (ulimit -n).
+      Default 8000; reduce to 1000 if OS limit is set low.
+    category: "Validation"
+
+  # ── Supplementary / Secondary Reads ───────────────────────────────────────
+  skip_duplicate_type:
+    type: string
+    label: "Skip Duplicate Marking for Type (--SKIP_DUPLICATE_TYPE_ARGUMENT)"
+    default: ""
+    choices: ["", "BULK", "EXTERNAL"]
+    description: >
+      Skip duplicate marking for a specific read type.
+      'BULK': skip read pairs tagged with special bulk sequencing tags.
+      'EXTERNAL': skip externally-identified duplicates.
+      Leave empty for standard behavior.
+    category: "Advanced"
+
+  include_secondary:
+    type: bool
+    label: "Treat Secondary Reads as Primary (ASSUME_SORT_ORDER)"
+    default: false
+    description: >
+      When enabled, consider secondary alignments (SAM flag 0x100) for duplicate
+      detection. Not recommended for standard GATK workflows.
+    category: "Advanced"
+
+inputs:
+  bam_in:
+    type: file
+    extensions: [".bam"]
+    label: "Input BAM (coordinate-sorted)"
+    required: true
+    description: >
+      Coordinate-sorted input BAM with @RG read groups.
+      Verify sort order: samtools view -H {bam} | grep 'SO:coordinate'.
+
+outputs:
+  bam_out:
+    type: file
+    extensions: [".bam"]
+    label: "Duplicate-Marked BAM"
+    description: >
+      Output BAM with duplicate reads marked (flag 0x400) or removed,
+      and an accompanying .bai index file.
+
+  metrics_out:
+    type: file
+    extensions: [".txt"]
+    label: "Duplicate Metrics"
+    description: >
+      Tab-delimited metrics file with: ESTIMATED_LIBRARY_SIZE, PERCENT_DUPLICATION,
+      READ_PAIR_DUPLICATES, READ_PAIR_OPTICAL_DUPLICATES, UNMAPPED_READS, etc.
+      Compatible with MultiQC for aggregate reporting.
+
+command:
+  template: |
+    set -euo pipefail
+    OUTDIR=$(dirname {bam_out})
+    mkdir -p "$OUTDIR"
+    mkdir -p "{java_tmpdir}"
+
+    picard \
+      --java-options "-Xmx{java_memory} -Djava.io.tmpdir={java_tmpdir}" \
+      MarkDuplicates \
+      INPUT={bam_in} \
+      OUTPUT={bam_out} \
+      METRICS_FILE={metrics_out} \
+      REMOVE_DUPLICATES={remove_duplicates} \
+      REMOVE_SEQUENCING_DUPLICATES={remove_sequencing_duplicates} \
+      DUPLICATE_SCORING_STRATEGY={duplicate_scoring_strategy} \
+      OPTICAL_DUPLICATE_PIXEL_DISTANCE={optical_duplicate_pixel_distance} \
+      MAX_OPTICAL_DUPLICATE_SET_SIZE={max_optical_duplicate_set_size} \
+      TAGGING_POLICY={tagging_policy} \
+      CLEAR_DT={clear_dt} \
+      TAG_DUPLICATE_SET_MEMBERS={tag_duplicate_set_members} \
+      ASSUME_SORTED={assume_sorted} \
+      SORTING_COLLECTION_SIZE_RATIO={sorting_collection_size_ratio} \
+      MAX_FILE_HANDLES_FOR_READ_ENDS_MAP={max_file_handles} \
+      COMPRESSION_LEVEL={compression_level} \
+      CREATE_INDEX={create_index} \
+      CREATE_MD5_FILE={create_md5_file} \
+      VALIDATION_STRINGENCY={validation_stringency} \
+      TMP_DIR={java_tmpdir} \
+      {%- if read_name_regex %} READ_NAME_REGEX="{read_name_regex}" {%- endif %}
+
+    echo "[Picard] MarkDuplicates complete: {bam_out}"
+    echo "--- Duplication Metrics ---"
+    grep -A2 "LIBRARY" {metrics_out} | head -20
+  shell: "/bin/bash"

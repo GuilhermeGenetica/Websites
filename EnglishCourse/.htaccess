@@ -1,0 +1,67 @@
+# Adress: /
+# File: .htaccess
+# Extension: .htaccess
+
+# --- START: General Security and HTTPS Enforcement ---
+
+# Disallow Directory Listing for the root directory
+Options -Indexes
+
+# 1. FORÇA HTTPS
+# Esta é a diretiva mais importante para garantir a segurança dos tokens JWT e Stripe.
+RewriteEngine On
+RewriteBase /
+
+# Redirecionar HTTP para HTTPS
+RewriteCond %{HTTPS} off
+RewriteRule ^(.*)$ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+
+# --- END: General Security and HTTPS Enforcement ---
+
+# --- START: Protect Sensitive Files ---
+
+# CRITICAL: Deny direct web access to .env file, Composer files, and the vendor directory.
+# Since this .htaccess is in the root, this is the final security layer.
+<Files ".env">
+    Require all denied
+</Files>
+<Files "composer.json">
+    Require all denied
+</Files>
+<Files "composer.lock">
+    Require all denied
+</Files>
+<Files "schema.sql">
+    Require all denied
+</Files>
+# Block access to the entire vendor directory contents, which contains sensitive PHP libraries
+RewriteRule ^vendor/.* - [F,L]
+# Block access to the entire node_modules directory
+RewriteRule ^node_modules/.* - [F,L]
+# Block access to source files
+RewriteRule ^src/.* - [F,L]
+
+# --- END: Protect Sensitive Files ---
+
+
+# --- START: Single Page Application (SPA) Routing ---
+
+# This block ensures that all non-API and non-file requests are routed to index.html
+# This is necessary for React/Vue/Svelte routers to work on page reload.
+# Assuming your build output (Vite/Webpack) is placed in the 'dist' folder.
+
+# 2. Reescrita para SPA
+# Se a requisição NÃO for para a pasta API...
+RewriteCond %{REQUEST_URI} !^/api/
+# ... E NÃO for para a pasta dist (conteúdo estático)...
+RewriteCond %{REQUEST_URI} !^/dist/
+# ... E NÃO for para um ficheiro existente (como CSS, JS, etc.)...
+RewriteCond %{REQUEST_FILENAME} !-f
+# ... E NÃO for para um diretório existente.
+RewriteCond %{REQUEST_FILENAME} !-d
+# ... Então, reencaminha para o index.html dentro da pasta dist.
+# Se o seu index.html estiver na raiz do projeto, use 'index.html'
+# Se o seu index.html estiver na pasta de build (dist), use 'dist/index.html' (RECOMENDADO)
+RewriteRule ^(.*)$ dist/index.html [L]
+
+# --- END: Single Page Application (SPA) Routing ---

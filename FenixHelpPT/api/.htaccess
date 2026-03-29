@@ -1,0 +1,19 @@
+<IfModule mod_rewrite.c>
+    # Ativa o motor de reescrita de URLs
+    RewriteEngine On
+
+    # Define a base para as regras de reescrita como a pasta /api/
+    RewriteBase /api/
+
+    # Não reescreve pedidos para ficheiros que já existem
+    RewriteCond %{REQUEST_FILENAME} !-f
+    # Não reescreve pedidos para pastas que já existem
+    RewriteCond %{REQUEST_FILENAME} !-d
+
+    # Redireciona todos os outros pedidos para o api.php
+    # Isto é um fallback, mas a nossa lógica principal usará parâmetros diretos
+    RewriteRule . api.php [L]
+</IfModule>
+
+# Impede que os utilizadores possam ver uma lista dos ficheiros na pasta
+Options -Indexes

@@ -1,0 +1,28 @@
+[build-system]
+requires      = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name        = "seqnode-agent"
+version     = "1.0.0"
+description = "Local execution agent for SeqNode-OS bioinformatics pipelines"
+readme      = "README.md"
+license     = { text = "MIT" }
+requires-python = ">=3.10"
+keywords    = ["bioinformatics", "pipeline", "agent", "websocket"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+    "Environment :: Console",
+]
+
+dependencies = [
+    "websockets>=12.0",
+    "psutil>=5.9",
+]
+
+[project.scripts]
+seqnode-agent = "agent:main"
+
+[tool.setuptools]
+py-modules = ["agent", "ws_client", "executor", "security", "config", "monitor"]

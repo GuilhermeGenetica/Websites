@@ -1,0 +1,31 @@
+{
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@/*": [
+        "./src/*"
+      ]
+    },
+    "jsx": "react-jsx", // Ou "react" se você estiver usando React clássico
+    "target": "es2020",
+    "module": "esnext",
+    "moduleResolution": "bundler", // Para Vite, 'bundler' ou 'node' funciona bem
+    "allowJs": true,
+    "checkJs": true, // Opcional: Habilita verificações básicas de tipo em arquivos JS
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true
+  },
+  "include": [
+    "src/**/*.js",
+    "src/**/*.jsx",
+    "src/**/*.ts",
+    "src/**/*.tsx"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist"
+  ]
+}

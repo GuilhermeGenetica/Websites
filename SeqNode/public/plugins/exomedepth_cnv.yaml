@@ -1,0 +1,793 @@
+name: "ExomeDepth CNV"
+id: "exomedepth_cnv"
+version: "1.1.16"
+category: "CNV Analysis"
+description: >
+  R-based germline CNV detection using a beta-binomial read-depth model optimised for
+  whole-exome sequencing (WES) with capture-kit target BED.
+  Supports leave-one-out (multi-sample), flat-reference (single-sample), and
+  user-supplied reference set modes. Includes GC content normalisation via the
+  reference FASTA, automatic sex chromosome handling, HMM transition probability
+  and expected CNV length tuning, overdispersion estimation, and phi estimation bins.
+  Produces per-sample TSV with: chromosome, start, end, type (deletion/duplication),
+  nexons, id, BF (Bayes factor), reads.expected, reads.observed, reads.ratio.
+  Optional: outputs serialised read counts RDS for fast re-analysis, per-sample R log,
+  and aggregate counts matrix TSV for QC.
+  Complement to CNVkit for dual-caller consensus (CNV Consensus plugin).
+  Citation: Plagnol et al. 2012 (doi:10.1093/bioinformatics/bts526).
+author: "Vincent Plagnol"
+license: "GPL-3"
+tags: [cnv, exomedepth, r, wes, exome, beta-binomial, germline, read-depth, leave-one-out, gc-normalisation]
+
+install:
+  method: conda
+  conda_env: seqnode
+  conda_package: "r-exomedepth=1.1.16"
+  conda_channels: [bioconda, conda-forge, defaults]
+  binary: Rscript
+  version_check: "Rscript -e \"cat(as.character(packageVersion('ExomeDepth')))\" 2>/dev/null"
+  size_estimate: "~80 MB (R + ExomeDepth + Rsamtools + GenomicRanges)"
+  docs_url: "https://cran.r-project.org/web/packages/ExomeDepth/vignettes/ExomeDepth-vignette.html"
+  notes: >
+    Requires R packages: ExomeDepth (>=1.1.16), Rsamtools, GenomicRanges, IRanges.
+    All available from bioconda:
+      mamba install -c bioconda -c conda-forge r-exomedepth bioconductor-rsamtools bioconductor-genomicranges
+
+    Key concepts:
+    Read counts: ExomeDepth counts reads overlapping each target interval using
+      Rsamtools::getBamCounts(). Reads must be coordinate-sorted and indexed.
+    Beta-binomial model: test counts are modelled as beta-binomial with reference
+      counts as denominator. Overdispersion (phi) accounts for technical variability.
+    Reference selection: leave-one-out selects the N most correlated samples as
+      reference using select.reference.set(). More samples → better reference correlation.
+    Bayes factor (BF): log10(P(CNV) / P(no CNV)). Higher BF = more evidence.
+      BF ≥ 3: suggestive. BF ≥ 5: moderate. BF ≥ 10: strong. BF ≥ 20: very strong.
+    HMM: CallCNVs uses a Hidden Markov Model with transition_probability and
+      expected_cnv_length controlling state persistence.
+
+    GC normalisation requires the reference FASTA to be set (getBamCounts uses it
+    internally via Rsamtools). Without GC normalisation, capture efficiency bias
+    can produce systematic false positives in GC-extreme regions.
+
+    Single-sample mode: ExomeDepth uses the test sample as its own reference
+    (flat reference). Sensitivity is reduced but large CNVs (≥5 exons) are still
+    detected. Not recommended for clinical use; use multi-sample mode when possible.
+
+    Memory requirements:
+      ~4 GB per 50K target intervals with 10 samples.
+      ~1 GB per sample for read count matrices (for 50K intervals).
+      For large cohorts (>50 samples), count all samples once and save the RDS,
+      then re-analyse subsets by loading the cached RDS.
+
+  default_paths:
+    bin_path: "~/miniforge3/envs/seqnode/bin"
+    refs_path: ""
+    lib_path: ""
+  refs_required:
+    - key: hg38
+      label: "hg38 / GRCh38 FASTA (indexed with samtools faidx)"
+      url: "https://hgdownload.soe.ucsc.edu/goldenPath/hg38/bigZips/hg38.fa.gz"
+      subdir: "genomes/hg38"
+      index_cmd: "samtools faidx {ref_fa}"
+      size: "~3 GB uncompressed"
+
+runtime:
+  type: conda
+  conda_env: seqnode
+
+params:
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # REFERENCE
+  # ══════════════════════════════════════════════════════════════════════════
+
+  reference_fa:
+    type: string
+    label: "Reference FASTA (with .fai index)"
+    default: "~/cnv_work/00_refs/genomes/hg38/hg38.fa"
+    description: >
+      Path to the reference genome FASTA file, indexed with samtools faidx.
+      Used by Rsamtools::getBamCounts() for GC content calculation during read counting.
+      GC content normalisation compensates for capture efficiency bias in GC-extreme
+      exons, which is one of the most common sources of false positive CNV calls in WES.
+      Must match the assembly used for alignment and the chromosome naming convention
+      of the target BED file (both must use 'chr'-prefixed or both non-prefixed contigs).
+    category: "Reference"
+
+  genome_build:
+    type: string
+    label: "Genome Build"
+    default: "hg38"
+    choices: ["hg38", "hg19", "GRCh38", "GRCh37"]
+    description: >
+      Genome assembly identifier for annotation and output labelling.
+      'hg38'/'GRCh38': current standard (recommended for new projects).
+      'hg19'/'GRCh37': legacy — use for data aligned to GRCh37/hg19.
+      Affects chromosome naming convention in the output TSV.
+      Ensure consistency between this value and the reference FASTA and target BED.
+    category: "Reference"
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # HMM MODEL PARAMETERS
+  # ══════════════════════════════════════════════════════════════════════════
+
+  transition_probability:
+    type: float
+    label: "HMM Transition Probability"
+    default: 0.0001
+    description: >
+      Probability of the HMM transitioning from a 'normal copy number' state to a
+      'CNV' state (or vice versa) between adjacent exons.
+      Controls the penalty for switching state — lower values produce fewer, longer calls.
+      Range: 1e-6 to 1e-2.
+      1e-6 (0.000001): very conservative — only very strong, extended events called.
+      1e-4 (0.0001):   standard default — good balance for typical WES exome density.
+      1e-3 (0.001):    sensitive — more calls, shorter minimum event length.
+      1e-2 (0.01):     very sensitive — many small calls including single-exon events.
+      Decrease if calls are too fragmented; increase if too many large events.
+    category: "HMM Model"
+
+  expected_cnv_length:
+    type: int
+    label: "Expected CNV Length (bp)"
+    default: 50000
+    min: 1000
+    description: >
+      Prior expectation for CNV length in base pairs. Used by the HMM to set the
+      duration prior — longer expected_cnv_length favours longer merged calls.
+      50000 (50 kb): default for WES germline CNVs (typical gene-level deletions).
+      10000 (10 kb): use for denser panels or when many small CNVs are expected.
+      200000 (200 kb): use for large chromosomal rearrangements or very sparse panels.
+      This is a prior; observed data can override it if the signal is strong.
+    category: "HMM Model"
+
+  phi_bins:
+    type: int
+    label: "Phi Estimation Bins (Overdispersion)"
+    default: 1
+    min: 1
+    description: >
+      Number of bins for overdispersion (phi) estimation.
+      Phi is the extra-binomial variance parameter of the beta-binomial model.
+      1: global phi — estimate a single overdispersion value for all targets.
+         Fastest, appropriate for homogeneous capture panels.
+      2–5: estimate phi separately in bins of target coverage depth.
+         Allows different overdispersion for low-coverage vs high-coverage targets.
+         More accurate for heterogeneous capture panels with variable depth.
+      >5: local estimation — slower, rarely necessary for standard WES.
+    category: "HMM Model"
+
+  test_counts_aggregate:
+    type: bool
+    label: "Use Aggregate Test Counts"
+    default: false
+    description: >
+      When true, sum the read counts across all test samples before calling CNVs,
+      then call CNVs on the aggregate.
+      NOT standard ExomeDepth usage — only useful for tumour pools or aggregate
+      quality control. For standard per-sample calling, leave false.
+    category: "HMM Model"
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # REFERENCE SELECTION
+  # ══════════════════════════════════════════════════════════════════════════
+
+  use_leave_one_out:
+    type: bool
+    label: "Leave-One-Out Reference Selection"
+    default: true
+    description: >
+      When multiple BAM files are provided, use leave-one-out (LOO) to automatically
+      select the optimal subset of the remaining samples as the reference for each
+      test sample. The selection is based on Pearson correlation of read counts.
+      True: select the N most correlated samples as reference (recommended).
+        Eliminates batch effects; maximises sensitivity by using samples with the
+        most similar capture profiles.
+      False: use ALL other samples as the reference (sum of all remaining counts).
+        Simpler but can introduce noise if some samples have very different capture.
+      Requires ≥2 BAM files. For single-sample mode, this option is ignored.
+    category: "Reference Selection"
+
+  num_reference_samples:
+    type: int
+    label: "Number of Reference Samples (LOO)"
+    default: 0
+    min: 0
+    description: >
+      Maximum number of reference samples to include in the LOO reference set.
+      0: use all selected samples (ExomeDepth default — no limit).
+      5: use at most 5 most correlated samples (recommended for small cohorts).
+      10: appropriate for cohorts of 20+ samples.
+      Limiting reference samples can reduce memory and computation time
+      and avoids using distant samples that add noise rather than signal.
+    category: "Reference Selection"
+
+  custom_reference_bams:
+    type: string
+    label: "Custom Reference BAM List (override LOO)"
+    default: ""
+    description: >
+      Space-separated list of BAM file paths to use as a fixed reference panel,
+      bypassing automatic LOO selection.
+      Use when you have a pre-validated reference cohort (e.g. unaffected parents,
+      matched normals, or a curated reference set from a previous run).
+      Leave empty to use automatic LOO selection.
+    category: "Reference Selection"
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # CALL FILTERING
+  # ══════════════════════════════════════════════════════════════════════════
+
+  min_bf:
+    type: float
+    label: "Minimum Bayes Factor (post-call filter)"
+    default: 5.0
+    min: 0.0
+    description: >
+      Minimum Bayes factor (BF) to report a CNV call.
+      Applied after the HMM has called all events — filters the output TSV.
+      BF ≥ 3:  suggestive (for discovery or research).
+      BF ≥ 5:  moderate confidence (default — good for dual-caller consensus input).
+      BF ≥ 10: strong evidence (for single-caller clinical reporting).
+      BF ≥ 20: very strong (stringent clinical setting with low false positive tolerance).
+      Set lower (e.g. 3) when using this output as input to CNV Consensus, which
+      will apply further dual-caller filtering.
+    category: "Call Filtering"
+
+  min_num_exons:
+    type: int
+    label: "Minimum Number of Exons"
+    default: 1
+    min: 1
+    description: >
+      Minimum number of contiguous target exons required for a call to be reported.
+      1: include single-exon calls — maximum sensitivity, many false positives.
+      2: require ≥2 exons — significantly reduces single-probe artefacts.
+      3: conservative clinical threshold with high specificity.
+      Single-exon CNVs are common artefacts from:
+        - Capture efficiency outlier exons.
+        - Polymorphic regions with recurrent read-depth variation.
+        - Probe design artefacts.
+      For clinical reporting, require ≥2–3 exons for de novo CNV calls.
+    category: "Call Filtering"
+
+  output_all_calls:
+    type: bool
+    label: "Output All Calls (bypass BF filter)"
+    default: false
+    description: >
+      Write all HMM CNV calls to the output TSV, including those below min_bf.
+      Useful when:
+        - Passing all calls to CNV Consensus for dual-caller filtering (recommended).
+        - Reviewing the full call set for sensitivity benchmarking.
+        - Using ExomeDepth as a feature extractor rather than a caller.
+      When true, min_bf and min_num_exons are NOT applied to the output TSV.
+    category: "Call Filtering"
+
+  min_reads_ratio_delta:
+    type: float
+    label: "Min Reads Ratio Deviation (post-call filter)"
+    default: 0.0
+    min: 0.0
+    description: >
+      Minimum deviation of reads.ratio from 1.0 to retain a call.
+      reads.ratio = reads.observed / reads.expected.
+      An orthogonal depth-based filter to complement BF.
+      0.0: no filter (use BF only).
+      0.2: require reads.ratio ≤ 0.8 (deletion) or ≥ 1.2 (duplication).
+      0.5: only large-effect calls (50% depth change — roughly 1-copy events).
+      Useful for removing borderline BF calls with near-normal depth.
+    category: "Call Filtering"
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # CHROMOSOME HANDLING
+  # ══════════════════════════════════════════════════════════════════════════
+
+  include_chr_x:
+    type: bool
+    label: "Include Chromosome X"
+    default: true
+    description: >
+      Include chrX target intervals in read counting and CNV calling.
+      True: analyse chrX (default — appropriate for female-only or sex-matched cohorts).
+      False: exclude chrX targets — recommended for mixed-sex cohorts where male hemizygosity
+             creates systematic depth differences that generate false positives in females
+             (males have ~half the chrX depth of females).
+      When include_chr_x=true and the cohort is mixed-sex, consider splitting samples
+      by sex and running ExomeDepth separately per-sex cohort for chrX.
+    category: "Chromosome Handling"
+
+  include_chr_y:
+    type: bool
+    label: "Include Chromosome Y"
+    default: false
+    description: >
+      Include chrY target intervals in read counting and CNV calling.
+      False: exclude chrY (default — most WES designs have sparse or absent chrY targets,
+             and chrY analysis is unreliable in mixed-sex cohorts).
+      True: include chrY — only meaningful for male-only cohorts with chrY capture targets.
+      Note: most clinical exome panels do not capture chrY targets meaningfully.
+    category: "Chromosome Handling"
+
+  sex_chr_mode:
+    type: string
+    label: "Sex Chromosome Handling Mode"
+    default: "auto"
+    choices: ["auto", "male", "female", "exclude"]
+    description: >
+      Strategy for handling sex chromosome reference selection.
+      'auto': automatically detect sample sex from chrX read depth ratio and use
+              sex-matched samples as reference for sex chromosomes.
+              Males (chrX ratio ~0.5 vs females): matched to male reference samples.
+              Females (chrX ratio ~1.0): matched to female reference samples.
+      'male': treat all samples as male for sex chromosome reference selection.
+      'female': treat all samples as female for sex chromosome reference selection.
+      'exclude': equivalent to include_chr_x=false and include_chr_y=false.
+      The 'auto' mode requires ≥2 male AND ≥2 female samples in the cohort to work
+      reliably. For single-sex cohorts, use 'male' or 'female' explicitly.
+    category: "Chromosome Handling"
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # OUTPUT OPTIONS
+  # ══════════════════════════════════════════════════════════════════════════
+
+  output_mode:
+    type: string
+    label: "Output Mode"
+    default: "per_sample"
+    choices: ["per_sample", "merged"]
+    description: >
+      Controls how multi-sample output is organised.
+      'per_sample': write one TSV per sample, named {sample_name}.ExomeDepth.tsv.
+                   Standard mode — each sample processed independently.
+      'merged': write a single TSV with all samples' calls, adding a 'sample_id' column.
+                Useful for cohort-level analysis and downstream filtering in R/Python.
+    category: "Output"
+
+  save_counts_rds:
+    type: bool
+    label: "Save Read Counts to RDS Cache"
+    default: true
+    description: >
+      Serialise the read count matrix for all input samples to an RDS file
+      (exomedepth_counts.rds) in the output directory.
+      This allows re-analysis with different parameters without re-counting reads
+      (counting is the slowest step, ~5–20 min per sample for WES).
+      The RDS file can be loaded with: counts <- readRDS("exomedepth_counts.rds")
+    category: "Output"
+
+  load_counts_rds:
+    type: string
+    label: "Load Pre-Computed Counts RDS (skip counting)"
+    default: ""
+    description: >
+      Path to a previously saved exomedepth_counts.rds file.
+      When provided, ExomeDepth skips BAM read counting entirely and uses the
+      cached counts. All BAM files listed in bam_files must have entries in the RDS.
+      Dramatically reduces runtime for re-analysis with different thresholds or
+      reference sets.
+      Leave empty to perform fresh counting from BAM files.
+    category: "Output"
+
+  save_counts_matrix_tsv:
+    type: bool
+    label: "Export Read Counts Matrix as TSV"
+    default: false
+    description: >
+      Write the full read counts matrix (targets × samples) to a TSV file
+      (exomedepth_counts_matrix.tsv) for QC and downstream analysis.
+      Useful for PCA-based QC, batch detection, and sex determination.
+      Warning: for WES (50K targets × 50 samples), this file can be 50–200 MB.
+    category: "Output"
+
+  r_log_verbose:
+    type: bool
+    label: "Verbose R Log"
+    default: true
+    description: >
+      Write detailed ExomeDepth R execution messages to the log file, including:
+      reference set selection details, correlation values, phi estimates, and
+      per-sample call counts.
+      Disable for clean batch logs when only final call counts are needed.
+    category: "Output"
+
+  add_sample_column:
+    type: bool
+    label: "Add Sample ID Column to Output TSV"
+    default: true
+    description: >
+      Prepend a 'sample_id' column (derived from BAM filename) to each output TSV row.
+      Essential when output_mode=merged.
+      Useful even for per-sample TSVs when merging outputs for cohort analysis.
+    category: "Output"
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # ADVANCED R PARAMETERS
+  # ══════════════════════════════════════════════════════════════════════════
+
+  r_seed:
+    type: int
+    label: "R Random Seed"
+    default: 42
+    min: 0
+    description: >
+      Random seed for reproducibility.
+      ExomeDepth itself is deterministic, but setting a seed ensures that any
+      stochastic components (e.g. parallel operations) produce identical results.
+      0: use R's default seed (not reproducible across runs).
+      Any positive integer: reproducible mode.
+    category: "Advanced"
+
+  min_target_size:
+    type: int
+    label: "Min Target Size to Include (bp)"
+    default: 1
+    min: 1
+    description: >
+      Minimum target interval size in base pairs to include in analysis.
+      Targets shorter than this value are removed from the BED before counting.
+      Very short targets (<10 bp) often produce noisy counts and should be excluded.
+      1: include all targets regardless of size (default).
+      10: exclude very short intervals (e.g. degenerate BED rows).
+    category: "Advanced"
+
+  normalise_gc:
+    type: bool
+    label: "GC Content Normalisation"
+    default: true
+    description: >
+      Use GC content to correct for capture efficiency bias in read counts.
+      GC normalisation is performed internally by getBamCounts() when a reference
+      FASTA is provided.
+      True: compensates for systematic depth differences between GC-rich and GC-poor exons.
+      False: skip GC normalisation — use only when the reference FASTA is unavailable.
+      Disabling GC normalisation significantly increases false positive rates in
+      GC-extreme regions (e.g. promoters, GC-rich genes like BRCA2, TP53).
+    category: "Advanced"
+
+  max_targets_per_chrom:
+    type: int
+    label: "Max Targets Per Chromosome (memory limit)"
+    default: 0
+    min: 0
+    description: >
+      Maximum number of target intervals per chromosome to process.
+      0: no limit (process all targets).
+      Set a value (e.g. 20000) to reduce memory usage when processing chromosomes
+      with extremely dense capture designs or when RAM is limited.
+      Targets exceeding this limit are excluded from analysis.
+    category: "Advanced"
+
+inputs:
+  bam_files:
+    type: file
+    extensions: [".bam"]
+    label: "Input BAM File(s) (coordinate-sorted + indexed)"
+    required: true
+    description: >
+      One or more coordinate-sorted, indexed BAM files.
+      For multi-sample mode: space-separate multiple BAM paths.
+      All BAMs must be aligned to the same reference genome and chromosome naming convention.
+      Each BAM must have a corresponding .bai index in the same directory.
+      More samples (≥10) provide better reference selection and sensitivity.
+      Minimum for leave-one-out: 2 samples. Recommended: ≥5 for adequate reference quality.
+
+  target_bed:
+    type: file
+    extensions: [".bed"]
+    label: "Target BED (capture kit intervals)"
+    required: true
+    description: >
+      BED file defining the exome capture target intervals.
+      Columns: chr, start, end (4th column 'name' optional).
+      Must use the same chromosome naming convention as the BAM files (chr-prefixed or not).
+      Should be the actual capture design BED, not a padded or merged version.
+      Overlapping intervals will be handled by Rsamtools (counts reads overlapping any target).
+      For best results: use the manufacturer's probe-level BED (not the target-padded BED).
+
+outputs:
+  exomedepth_tsv:
+    type: file
+    extensions: [".tsv"]
+    label: "ExomeDepth CNV Calls (TSV)"
+    description: >
+      Per-sample TSV with ExomeDepth CNV calls.
+      In per_sample mode: one file per sample named {sample}.ExomeDepth.tsv.
+      In merged mode: a single TSV with all samples.
+      Standard columns: chromosome, start, end, type (deletion/duplication),
+      nexons, id, BF, reads.expected, reads.observed, reads.ratio.
+      Optional column (when add_sample_column=true): sample_id.
+      Ready for direct input to CNV Consensus plugin or AnnotSV.
+
+  r_log:
+    type: file
+    extensions: [".log"]
+    label: "R Execution Log"
+    description: >
+      Full Rscript stdout and stderr log for debugging and auditing.
+      Contains: package versions, sample list, target count, reference selection details,
+      correlation values, per-sample call counts, and any R warnings/errors.
+      Retain this log for reproducibility documentation.
+
+  counts_rds:
+    type: file
+    extensions: [".rds"]
+    label: "Read Counts Cache (RDS)"
+    description: >
+      Serialised R list with per-target read counts for all samples.
+      Written only when save_counts_rds=true.
+      Load in R: counts <- readRDS("exomedepth_counts.rds")
+      Reuse via load_counts_rds parameter to skip re-counting in future runs.
+
+command:
+  template: |
+    set -euo pipefail
+    OUTDIR=$(dirname {exomedepth_tsv})
+    mkdir -p "$OUTDIR"
+
+    cat > "$OUTDIR/_exomedepth_run.R" << 'REOF'
+    set.seed({r_seed})
+    args              <- commandArgs(trailingOnly=TRUE)
+    bam_str           <- args[1]
+    bed_file          <- args[2]
+    out_dir           <- args[3]
+    ref_fa            <- args[4]
+    trans_prob        <- as.numeric(args[5])
+    exp_len           <- as.numeric(args[6])
+    min_bf_val        <- as.numeric(args[7])
+    min_nexons_val    <- as.numeric(args[8])
+    use_loo           <- as.logical(args[9])
+    output_all        <- as.logical(args[10])
+    incl_x            <- as.logical(args[11])
+    incl_y            <- as.logical(args[12])
+    phi_bins_val      <- as.numeric(args[13])
+    load_rds          <- args[14]
+    save_rds          <- as.logical(args[15])
+    save_tsv          <- as.logical(args[16])
+    output_mode       <- args[17]
+    add_sample_col    <- as.logical(args[18])
+    num_ref           <- as.numeric(args[19])
+    custom_ref_str    <- args[20]
+    sex_mode          <- args[21]
+    min_rr_delta      <- as.numeric(args[22])
+    normalise_gc_val  <- as.logical(args[23])
+    min_tgt_size      <- as.numeric(args[24])
+    max_tgt_chrom     <- as.numeric(args[25])
+    verbose           <- as.logical(args[26])
+    merged_out_file   <- args[27]
+
+    suppressPackageStartupMessages({
+      library(ExomeDepth)
+      library(Rsamtools)
+      library(GenomicRanges)
+    })
+
+    if (verbose) message("[ExomeDepth] ExomeDepth version: ", as.character(packageVersion("ExomeDepth")))
+
+    bam_files <- strsplit(trimws(bam_str), "\\s+")[[1]]
+    bam_files <- bam_files[nchar(bam_files) > 0]
+
+    bed <- read.table(bed_file, header=FALSE, sep="\t", stringsAsFactors=FALSE,
+                      comment.char="#", fill=TRUE)
+    colnames(bed)[1:3] <- c("chromosome","start","end")
+    if (ncol(bed) >= 4) colnames(bed)[4] <- "name"
+    bed$start <- as.integer(bed$start)
+    bed$end   <- as.integer(bed$end)
+
+    if (min_tgt_size > 1) {
+      bed <- bed[(bed$end - bed$start) >= min_tgt_size, ]
+    }
+
+    if (!incl_x) bed <- bed[!grepl("^(chr)?X$", bed$chromosome, ignore.case=TRUE), ]
+    if (!incl_y) bed <- bed[!grepl("^(chr)?[Yy]$", bed$chromosome, ignore.case=TRUE), ]
+
+    if (sex_mode == "exclude") {
+      bed <- bed[!grepl("^(chr)?[XY]$", bed$chromosome, ignore.case=TRUE), ]
+    }
+
+    if (max_tgt_chrom > 0) {
+      chr_counts <- table(bed$chromosome)
+      large_chrs <- names(chr_counts[chr_counts > max_tgt_chrom])
+      for (chr in large_chrs) {
+        idx <- which(bed$chromosome == chr)
+        if (length(idx) > max_tgt_chrom) {
+          keep <- idx[seq_len(max_tgt_chrom)]
+          bed  <- bed[c(setdiff(seq_len(nrow(bed)), idx), keep), ]
+        }
+      }
+    }
+
+    bed <- bed[order(bed$chromosome, bed$start), ]
+    bed <- bed[bed$end > bed$start, ]
+
+    if (verbose) message("[ExomeDepth] ", length(bam_files), " BAM(s), ", nrow(bed), " target intervals after filtering")
+
+    write_empty <- function(path, sample_name) {
+      df <- data.frame(
+        chromosome=character(), start=integer(), end=integer(),
+        type=character(), nexons=integer(), id=character(),
+        BF=numeric(), reads.expected=numeric(),
+        reads.observed=numeric(), reads.ratio=numeric()
+      )
+      if (add_sample_col) df <- cbind(sample_id=character(), df)
+      write.table(df, file=path, sep="\t", quote=FALSE, row.names=FALSE)
+    }
+
+    if (nchar(load_rds) > 0 && file.exists(load_rds)) {
+      if (verbose) message("[ExomeDepth] Loading cached counts from: ", load_rds)
+      counts_list <- readRDS(load_rds)
+    } else {
+      counts_list <- list()
+      for (b in bam_files) {
+        if (verbose) message("[ExomeDepth] Counting reads: ", basename(b))
+        fa_arg <- if (normalise_gc_val && nchar(ref_fa) > 0) ref_fa else NULL
+        counts_list[[b]] <- tryCatch(
+          getBamCounts(bed.frame=bed, bam.files=b, referenceFasta=fa_arg),
+          error=function(e) {
+            message("[ExomeDepth] ERROR counting ", basename(b), ": ", e$message)
+            NULL
+          }
+        )
+      }
+      if (save_rds) {
+        rds_path <- file.path(out_dir, "exomedepth_counts.rds")
+        saveRDS(counts_list, file=rds_path)
+        if (verbose) message("[ExomeDepth] Counts saved to: ", rds_path)
+      }
+    }
+
+    valid_bams <- bam_files[!sapply(bam_files, function(b) is.null(counts_list[[b]]))]
+    if (length(valid_bams) == 0) {
+      message("[ExomeDepth] ERROR: No valid BAMs after counting. Aborting.")
+      q(status=1)
+    }
+
+    if (save_tsv) {
+      cnt_mat <- do.call(cbind, lapply(valid_bams, function(b) counts_list[[b]][,6]))
+      colnames(cnt_mat) <- basename(valid_bams)
+      tsv_path <- file.path(out_dir, "exomedepth_counts_matrix.tsv")
+      write.table(data.frame(bed[,1:3], cnt_mat), file=tsv_path, sep="\t",
+                  quote=FALSE, row.names=FALSE)
+      if (verbose) message("[ExomeDepth] Counts matrix written to: ", tsv_path)
+    }
+
+    custom_refs <- character(0)
+    if (nchar(custom_ref_str) > 0 && custom_ref_str != "NA") {
+      custom_refs <- strsplit(trimws(custom_ref_str), "\\s+")[[1]]
+      custom_refs <- custom_refs[nchar(custom_refs) > 0]
+    }
+
+    all_calls_list <- list()
+
+    for (i in seq_along(valid_bams)) {
+      bam <- valid_bams[i]
+      sample_name <- sub("\\.markdup$","",
+                    sub("\\.sorted$","",
+                    sub("\\.bam$","", basename(bam))))
+      out_file <- file.path(out_dir, paste0(sample_name, ".ExomeDepth.tsv"))
+      if (verbose) message("[ExomeDepth] Processing: ", sample_name,
+                           " (", i, "/", length(valid_bams), ")")
+
+      tryCatch({
+        test_counts <- as.integer(counts_list[[bam]][,6])
+
+        if (length(custom_refs) > 0) {
+          ref_bams  <- custom_refs[custom_refs %in% valid_bams]
+          ref_mat   <- do.call(cbind, lapply(ref_bams, function(b) counts_list[[b]][,6]))
+          ref_counts <- apply(ref_mat, 1, sum)
+          if (verbose) message("[ExomeDepth] Using custom reference panel (", length(ref_bams), " samples)")
+        } else if (length(valid_bams) > 1 && use_loo) {
+          ref_idx <- setdiff(seq_along(valid_bams), i)
+          ref_mat <- do.call(cbind, lapply(ref_idx, function(j) counts_list[[valid_bams[j]]][,6]))
+          if (verbose) message("[ExomeDepth] Selecting optimal reference from ", ncol(ref_mat), " candidate(s)...")
+          ref_sel <- select.reference.set(
+            test.counts=test_counts,
+            reference.counts=ref_mat,
+            bin.length=(bed$end - bed$start)
+          )
+          n_ref_use <- if (num_ref > 0) min(num_ref, ncol(ref_mat)) else ncol(ref_mat)
+          best_idx  <- ref_sel$reference.choice[seq_len(min(n_ref_use, length(ref_sel$reference.choice)))]
+          ref_counts <- apply(ref_mat[, best_idx, drop=FALSE], 1, sum)
+          if (verbose) message("[ExomeDepth] Selected ", length(best_idx), " reference sample(s)")
+        } else if (length(valid_bams) > 1 && !use_loo) {
+          ref_idx    <- setdiff(seq_along(valid_bams), i)
+          ref_mat    <- do.call(cbind, lapply(ref_idx, function(j) counts_list[[valid_bams[j]]][,6]))
+          ref_counts <- apply(ref_mat, 1, sum)
+          if (verbose) message("[ExomeDepth] Using all ", ncol(ref_mat), " other samples as reference")
+        } else {
+          ref_counts <- test_counts
+          if (verbose) message("[ExomeDepth] Single-sample mode — flat reference")
+        }
+
+        ed <- new("ExomeDepth",
+          test=test_counts,
+          reference=as.integer(ref_counts),
+          formula="cbind(test,reference)~1"
+        )
+        ed <- CallCNVs(ed,
+          transition.probability=trans_prob,
+          chromosome=bed$chromosome,
+          start=bed$start,
+          end=bed$end,
+          name=if("name" %in% colnames(bed)) bed$name else as.character(seq_len(nrow(bed))),
+          expected.CNV.length=exp_len
+        )
+
+        cnvs <- ed@CNV.calls
+        if (nrow(cnvs) == 0) {
+          if (verbose) message("[ExomeDepth] ", sample_name, ": 0 calls")
+          write_empty(out_file, sample_name)
+          all_calls_list[[sample_name]] <- data.frame()
+          next
+        }
+
+        if (!output_all) {
+          cnvs <- cnvs[cnvs$BF >= min_bf_val,, drop=FALSE]
+          cnvs <- cnvs[cnvs$nexons >= min_nexons_val,, drop=FALSE]
+        }
+
+        if (min_rr_delta > 0 && "reads.ratio" %in% colnames(cnvs)) {
+          cnvs <- cnvs[abs(cnvs$reads.ratio - 1.0) >= min_rr_delta,, drop=FALSE]
+        }
+
+        if (add_sample_col) {
+          cnvs <- cbind(sample_id=sample_name, cnvs)
+        }
+
+        if (verbose) message("[ExomeDepth] ", sample_name, ": ", nrow(cnvs), " call(s)")
+        write.table(cnvs, file=out_file, sep="\t", quote=FALSE, row.names=FALSE)
+        all_calls_list[[sample_name]] <- cnvs
+
+      }, error=function(e) {
+        message("[ExomeDepth] ERROR for ", sample_name, ": ", e$message)
+        write_empty(out_file, sample_name)
+        all_calls_list[[sample_name]] <<- data.frame()
+      })
+    }
+
+    if (output_mode == "merged" && nchar(merged_out_file) > 0) {
+      all_dfs <- Filter(function(x) nrow(x) > 0, all_calls_list)
+      if (length(all_dfs) > 0) {
+        merged_df <- do.call(rbind, all_dfs)
+        write.table(merged_df, file=merged_out_file, sep="\t", quote=FALSE, row.names=FALSE)
+        if (verbose) message("[ExomeDepth] Merged output written: ", merged_out_file,
+                             " (", nrow(merged_df), " total calls)")
+      }
+    }
+
+    total_calls <- sum(sapply(all_calls_list, nrow))
+    message("[ExomeDepth] All samples complete. Total calls: ", total_calls)
+    REOF
+
+    Rscript "$OUTDIR/_exomedepth_run.R" \
+      "{bam_files}" \
+      "{target_bed}" \
+      "$OUTDIR" \
+      "{reference_fa}" \
+      "{transition_probability}" \
+      "{expected_cnv_length}" \
+      "{min_bf}" \
+      "{min_num_exons}" \
+      "{use_leave_one_out}" \
+      "{output_all_calls}" \
+      "{include_chr_x}" \
+      "{include_chr_y}" \
+      "{phi_bins}" \
+      "{load_counts_rds}" \
+      "{save_counts_rds}" \
+      "{save_counts_matrix_tsv}" \
+      "{output_mode}" \
+      "{add_sample_column}" \
+      "{num_reference_samples}" \
+      "{custom_reference_bams}" \
+      "{sex_chr_mode}" \
+      "{min_reads_ratio_delta}" \
+      "{normalise_gc}" \
+      "{min_target_size}" \
+      "{max_targets_per_chrom}" \
+      "{r_log_verbose}" \
+      "{exomedepth_tsv}" \
+      > {r_log} 2>&1
+
+    echo "[ExomeDepth] Done. Log: {r_log}"
+  shell: "/bin/bash"

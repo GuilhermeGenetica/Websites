@@ -1,0 +1,596 @@
+name: "FastP QC & Trim"
+id: "fastp_qc"
+version: "0.23.4"
+category: "Quality Control"
+description: >
+  Ultra-fast FASTQ quality control and adapter trimming. fastp processes paired-end or
+  single-end reads, auto-detects Illumina adapter sequences, performs quality-based
+  per-base trimming (sliding window and 3'/5' tail trimming), length filtering,
+  low-complexity filtering, PolyG/PolyX tail trimming (critical for NovaSeq/NextSeq),
+  UMI extraction, duplication analysis, and produces detailed HTML/JSON QC reports
+  compatible with MultiQC. First mandatory step for any FASTQ-based pipeline.
+  Citation: Chen et al. 2018 (doi:10.1002/imt2.107).
+author: "Shifu Chen (OpenGene)"
+license: "MIT"
+tags: [qc, fastq, trim, adapter, illumina, novaseq, umi, paired-end, multiqc, preprocessing]
+
+install:
+  method: conda
+  conda_env: seqnode
+  conda_package: "fastp=0.23.4"
+  conda_channels: [bioconda, conda-forge, defaults]
+  binary: fastp
+  version_check: "fastp --version 2>&1 | head -1"
+  size_estimate: "~15 MB"
+  docs_url: "https://github.com/OpenGene/fastp"
+  notes: >
+    fastp is a single-binary tool requiring no additional reference files.
+    Adapter sequences are auto-detected for paired-end data by overlap analysis.
+    For single-end data, specify adapters manually or use --detect_adapter_for_se.
+    PolyG trimming is automatically applied for 2-color chemistry (NovaSeq, NextSeq).
+    For UMI-based protocols, enable UMI extraction and set correct UMI location and length.
+    JSON output is directly consumed by MultiQC for aggregate report generation.
+    HTML report includes per-cycle quality, GC content distribution, insert-size histogram,
+    adapter content, and duplication rate visualizations.
+    Thread count is effectively capped at 16 by fastp's internal implementation.
+  default_paths:
+    bin_path: "~/miniforge3/envs/seqnode/bin"
+    refs_path: ""
+    lib_path: ""
+
+runtime:
+  type: conda
+  conda_env: seqnode
+
+params:
+
+  # ── Threading ──────────────────────────────────────────────────────────────
+  threads:
+    type: int
+    label: "Threads (-w)"
+    default: 8
+    min: 1
+    max: 16
+    description: >
+      Number of worker threads. fastp uses separate threads for reading,
+      processing, and writing. Effective maximum is 16 (hard-coded internally).
+      I/O throughput is usually the bottleneck; 4–8 threads typically saturates disk.
+    category: "Performance"
+
+  # ── Adapter Trimming ───────────────────────────────────────────────────────
+  detect_adapter_for_pe:
+    type: bool
+    label: "Auto-detect Adapters for PE (--detect_adapter_for_pe)"
+    default: true
+    description: >
+      Automatically detect adapter sequences for paired-end reads using
+      overlap analysis. Recommended for most Illumina paired-end data.
+      Disable only if you know exact adapter sequences and prefer to specify them manually.
+    category: "Adapter Trimming"
+
+  detect_adapter_for_se:
+    type: bool
+    label: "Auto-detect Adapters for SE (--detect_adapter_for_se)"
+    default: false
+    description: >
+      Attempt adapter detection for single-end reads by kmer analysis.
+      Less accurate than PE detection. Recommended to specify adapter explicitly
+      for single-end data.
+    category: "Adapter Trimming"
+
+  adapter_sequence:
+    type: string
+    label: "Adapter R1 (--adapter_sequence)"
+    default: ""
+    description: >
+      Explicit adapter sequence for Read 1 (5' to 3').
+      Standard Illumina universal adapter: AGATCGGAAGAGCACACGTCTGAACTCCAGTCA.
+      TruSeq Read 1: AGATCGGAAGAGCACACGTCTGAACTCCAGTCAC.
+      Leave empty to use auto-detection.
+    category: "Adapter Trimming"
+
+  adapter_sequence_r2:
+    type: string
+    label: "Adapter R2 (--adapter_sequence_r2)"
+    default: ""
+    description: >
+      Explicit adapter sequence for Read 2 (5' to 3').
+      Standard Illumina universal adapter: AGATCGGAAGAGCGTCGTGTAGGGAAAGAGTGT.
+      TruSeq Read 2: AGATCGGAAGAGCGTCGTGTAGGGAAAGAGTGT.
+      Leave empty to use auto-detection.
+    category: "Adapter Trimming"
+
+  adapter_fasta:
+    type: string
+    label: "Adapter FASTA File (--adapter_fasta)"
+    default: ""
+    description: >
+      Path to a FASTA file containing one or more adapter sequences to trim.
+      Useful for custom adapter libraries or when trimming multiple adapters.
+      Takes priority over --adapter_sequence when specified.
+    category: "Adapter Trimming"
+
+  disable_adapter_trimming:
+    type: bool
+    label: "Disable Adapter Trimming (-A)"
+    default: false
+    description: >
+      Completely disable adapter trimming. Use when reads are already adapter-trimmed
+      or when you want only quality-based trimming.
+    category: "Adapter Trimming"
+
+  # ── Quality Trimming ───────────────────────────────────────────────────────
+  quality_threshold:
+    type: int
+    label: "Sliding Window Quality Threshold (--qualified_quality_phred)"
+    default: 20
+    min: 0
+    max: 40
+    description: >
+      Phred quality score threshold for sliding window trimming.
+      Bases below this threshold trigger 3' trimming. Q20 = 99% base accuracy.
+      Typical values: Q15 (sensitive) to Q30 (stringent). Q20 is the standard.
+    category: "Quality Trimming"
+
+  unqualified_percent_limit:
+    type: int
+    label: "Max % Unqualified Bases (--unqualified_percent_limit)"
+    default: 40
+    min: 0
+    max: 100
+    description: >
+      Maximum percentage of bases with quality below the quality threshold
+      allowed per read. Reads exceeding this limit are discarded entirely.
+      Default 40% (lenient). Set lower (e.g. 20%) for more stringent filtering.
+    category: "Quality Trimming"
+
+  n_base_limit:
+    type: int
+    label: "Max N Bases per Read (--n_base_limit)"
+    default: 5
+    min: 0
+    max: 50
+    description: >
+      Reads with more than this number of N (uncalled) bases are discarded.
+      N bases indicate low-confidence positions. Default 5 is appropriate for most use cases.
+    category: "Quality Trimming"
+
+  cut_front:
+    type: bool
+    label: "Cut 5' Low-quality Bases (--cut_front)"
+    default: false
+    description: >
+      Apply sliding window trimming from the 5' end of reads.
+      Removes low-quality bases from the start of reads.
+      Useful when 5' ends consistently show quality degradation (e.g. some library preps).
+    category: "Quality Trimming"
+
+  cut_tail:
+    type: bool
+    label: "Cut 3' Low-quality Bases (--cut_tail)"
+    default: true
+    description: >
+      Apply sliding window trimming from the 3' end of reads.
+      Standard quality trimming to remove low-quality 3' ends.
+      Enabled by default as 3' quality degradation is nearly universal in Illumina.
+    category: "Quality Trimming"
+
+  cut_right:
+    type: bool
+    label: "Scan from Right (--cut_right)"
+    default: false
+    description: >
+      Alternative to cut_tail: scan from the rightmost window and cut to the right
+      of the first low-quality window. Behaviorally equivalent to Trimmomatic SLIDINGWINDOW.
+    category: "Quality Trimming"
+
+  cut_window_size:
+    type: int
+    label: "Sliding Window Size (--cut_window_size)"
+    default: 4
+    min: 1
+    max: 1000
+    description: >
+      Size (in bases) of the sliding window used for quality trimming when
+      cut_front, cut_tail, or cut_right is enabled. Larger windows are less sensitive
+      to single-base quality drops. Default 4 matches original Trimmomatic behavior.
+    category: "Quality Trimming"
+
+  cut_mean_quality:
+    type: int
+    label: "Sliding Window Mean Quality (--cut_mean_quality)"
+    default: 20
+    min: 0
+    max: 40
+    description: >
+      Mean quality threshold for the sliding window. Windows with mean quality
+      below this value trigger trimming. Default 20 (Q20).
+    category: "Quality Trimming"
+
+  # ── Length Filtering ───────────────────────────────────────────────────────
+  min_length:
+    type: int
+    label: "Min Read Length After Trimming (--length_required)"
+    default: 36
+    min: 1
+    description: >
+      Discard reads shorter than this threshold after adapter and quality trimming.
+      Short reads reduce alignment specificity. Typical: 36 bp for 150 bp reads,
+      15–20 bp for small RNA/miRNA protocols.
+    category: "Length Filtering"
+
+  max_length:
+    type: int
+    label: "Max Read Length (--length_limit)"
+    default: 0
+    description: >
+      Discard reads longer than this threshold (including after any trimming).
+      Useful for size-selection in amplicon or target enrichment protocols.
+      Set 0 to disable (no upper length limit).
+    category: "Length Filtering"
+
+  # ── PolyG / PolyX Trimming ─────────────────────────────────────────────────
+  trim_poly_g:
+    type: bool
+    label: "Trim PolyG Tails (--trim_poly_g)"
+    default: true
+    description: >
+      Trim poly-G tails from 3' ends. Poly-G artifacts arise in 2-color Illumina
+      chemistry (NovaSeq 6000, NextSeq 500/550) where low-quality cycles are encoded
+      as G. Enabled automatically for these instruments; enable explicitly otherwise.
+    category: "PolyG/PolyX"
+
+  disable_trim_poly_g:
+    type: bool
+    label: "Disable PolyG Trimming (-G)"
+    default: false
+    description: >
+      Explicitly disable poly-G tail trimming. Use when working with data from
+      4-color chemistry instruments (HiSeq 2500, MiSeq) where poly-G is not an artifact.
+    category: "PolyG/PolyX"
+
+  poly_g_min_len:
+    type: int
+    label: "PolyG Min Length (--poly_g_min_len)"
+    default: 10
+    min: 1
+    description: >
+      Minimum length of poly-G tail to trigger trimming. A poly-G run shorter
+      than this is left untrimmed. Default 10 is appropriate for most NovaSeq data.
+    category: "PolyG/PolyX"
+
+  trim_poly_x:
+    type: bool
+    label: "Trim PolyX Tails (--trim_poly_x)"
+    default: false
+    description: >
+      Trim any homopolymer run (polyA, polyC, polyG, polyT) from 3' ends.
+      More aggressive than polyG-only trimming. Useful for direct RNA-sequencing
+      or when polyA tails are expected.
+    category: "PolyG/PolyX"
+
+  poly_x_min_len:
+    type: int
+    label: "PolyX Min Length (--poly_x_min_len)"
+    default: 10
+    min: 1
+    description: >
+      Minimum length of any homopolymer run to trigger poly-X trimming.
+    category: "PolyG/PolyX"
+
+  # ── Low Complexity Filtering ───────────────────────────────────────────────
+  low_complexity_filter:
+    type: bool
+    label: "Low Complexity Filter (--low_complexity_filter)"
+    default: false
+    description: >
+      Discard reads with low sequence complexity (e.g. repeated sequences,
+      satellite DNA, homopolymers). Complexity is measured by compression ratio.
+      Recommended for metagenomics; usually off for WES/WGS.
+    category: "Complexity"
+
+  complexity_threshold:
+    type: int
+    label: "Complexity Threshold (--complexity_threshold)"
+    default: 30
+    min: 0
+    max: 100
+    description: >
+      Reads with complexity below this percentage are discarded when
+      low_complexity_filter is enabled. Default 30% (removes very low-complexity reads).
+    category: "Complexity"
+
+  # ── Deduplication ──────────────────────────────────────────────────────────
+  dedup:
+    type: bool
+    label: "Deduplicate Reads (--dedup)"
+    default: false
+    description: >
+      Remove PCR/optical duplicate read pairs based on exact sequence matching.
+      Memory-intensive for large datasets. For WES/WGS it is generally better to
+      use Picard/sambamba MarkDuplicates after alignment (post-alignment deduplication
+      uses genomic coordinates and is more accurate).
+      Enable here only for specific protocols (e.g. amplicon sequencing).
+    category: "Deduplication"
+
+  dup_calc_accuracy:
+    type: int
+    label: "Dedup Accuracy Level (--dup_calc_accuracy)"
+    default: 3
+    min: 1
+    max: 6
+    description: >
+      Accuracy of duplication rate calculation when dedup is enabled.
+      1 (fastest, least memory) to 6 (most accurate, most memory).
+      Higher levels use larger hash tables. Default 3 is a good balance.
+    category: "Deduplication"
+
+  # ── UMI ───────────────────────────────────────────────────────────────────
+  umi:
+    type: bool
+    label: "Enable UMI Processing (--umi)"
+    default: false
+    description: >
+      Enable UMI (Unique Molecular Identifier) extraction and annotation.
+      UMI sequences are moved from reads to the read name for downstream
+      deduplication using UMI-aware tools (e.g. UMI-tools, fgbio).
+    category: "UMI"
+
+  umi_loc:
+    type: string
+    label: "UMI Location (--umi_loc)"
+    default: "index1"
+    choices: ["index1", "index2", "read1", "read2", "per_index", "per_read"]
+    description: >
+      Location of UMI sequence in the read structure.
+      'index1': UMI is in the first index read (I1). 'index2': in I2 index.
+      'read1': UMI is at the 5' end of R1. 'read2': at the 5' end of R2.
+      'per_index': separate UMIs in I1 and I2. 'per_read': in both R1 and R2.
+    category: "UMI"
+
+  umi_len:
+    type: int
+    label: "UMI Length (--umi_len)"
+    default: 0
+    description: >
+      Length of UMI sequence in bases. Required when umi_loc is 'read1', 'read2',
+      or 'per_read'. Set to actual UMI length (e.g. 8, 10, 12).
+    category: "UMI"
+
+  umi_prefix:
+    type: string
+    label: "UMI Prefix (--umi_prefix)"
+    default: "UMI"
+    description: >
+      Prefix added to the UMI in the read name. The resulting format will be:
+      @readname_PREFIX:NNNNNNNN. Default 'UMI'. Change to match downstream tool expectations.
+    category: "UMI"
+
+  umi_skip:
+    type: int
+    label: "UMI Skip Bases (--umi_skip)"
+    default: 0
+    description: >
+      Number of bases to skip (ignore) before the UMI sequence when umi_loc
+      is 'read1' or 'read2'. Handles spacer/linker sequences between primer and UMI.
+    category: "UMI"
+
+  # ── Overlap Analysis ───────────────────────────────────────────────────────
+  correction:
+    type: bool
+    label: "Overlap Error Correction (--correction)"
+    default: false
+    description: >
+      Correct base call errors in the overlapping region of paired-end reads
+      (where R1 and R2 overlap). When both reads disagree at a position,
+      the higher-quality base is kept and the other is corrected.
+      Improves accuracy especially for short inserts.
+    category: "Overlap"
+
+  overlap_len_require:
+    type: int
+    label: "Min Overlap Length (--overlap_len_require)"
+    default: 30
+    min: 1
+    description: >
+      Minimum length of the overlap between R1 and R2 required for
+      correction and adapter detection by overlap. Reduce for very short inserts.
+    category: "Overlap"
+
+  overlap_diff_limit:
+    type: int
+    label: "Max Overlap Mismatches (--overlap_diff_limit)"
+    default: 5
+    description: >
+      Maximum number of mismatches allowed in the overlap region.
+      Higher values tolerate more errors in overlapping regions.
+    category: "Overlap"
+
+  overlap_diff_percent_limit:
+    type: float
+    label: "Max Overlap Mismatch % (--overlap_diff_percent_limit)"
+    default: 20.0
+    description: >
+      Maximum percentage of mismatches in the overlap region (0–100).
+      The less stringent of this and overlap_diff_limit is used.
+    category: "Overlap"
+
+  # ── Specific 5'/3' Trimming ────────────────────────────────────────────────
+  trim_front1:
+    type: int
+    label: "Trim 5' Bases R1 (--trim_front1)"
+    default: 0
+    min: 0
+    description: >
+      Always trim this many bases from the 5' (front) end of Read 1,
+      regardless of quality. Useful for removing primer sequences,
+      random hexamer bias, or known technical artifacts at read start.
+    category: "Fixed Trimming"
+
+  trim_tail1:
+    type: int
+    label: "Trim 3' Bases R1 (--trim_tail1)"
+    default: 0
+    min: 0
+    description: >
+      Always trim this many bases from the 3' (tail) end of Read 1.
+      Use for fixed-position artifacts.
+    category: "Fixed Trimming"
+
+  trim_front2:
+    type: int
+    label: "Trim 5' Bases R2 (--trim_front2)"
+    default: 0
+    min: 0
+    description: >
+      Always trim this many bases from the 5' (front) end of Read 2.
+    category: "Fixed Trimming"
+
+  trim_tail2:
+    type: int
+    label: "Trim 3' Bases R2 (--trim_tail2)"
+    default: 0
+    min: 0
+    description: >
+      Always trim this many bases from the 3' (tail) end of Read 2.
+    category: "Fixed Trimming"
+
+  max_len1:
+    type: int
+    label: "Max R1 Length After Trim (--max_len1)"
+    default: 0
+    description: >
+      Truncate Read 1 to at most this length after all other trimming.
+      Set 0 to disable. Useful for downstream tools requiring fixed read length.
+    category: "Fixed Trimming"
+
+  max_len2:
+    type: int
+    label: "Max R2 Length After Trim (--max_len2)"
+    default: 0
+    description: >
+      Truncate Read 2 to at most this length after all other trimming.
+    category: "Fixed Trimming"
+
+  # ── Reporting ──────────────────────────────────────────────────────────────
+  report_title:
+    type: string
+    label: "HTML Report Title"
+    default: "fastp report"
+    description: >
+      Title displayed in the HTML QC report. Use sample name or run ID
+      for easy identification in aggregate MultiQC reports.
+    category: "Reporting"
+
+  disable_quality_filtering:
+    type: bool
+    label: "Disable Quality Filtering (-Q)"
+    default: false
+    description: >
+      Completely disable all quality-based filtering (but keep adapter trimming).
+      Use only for diagnostic purposes to assess raw read quality.
+    category: "Reporting"
+
+  disable_length_filtering:
+    type: bool
+    label: "Disable Length Filtering (-L)"
+    default: false
+    description: >
+      Completely disable minimum/maximum length filtering.
+    category: "Reporting"
+
+inputs:
+  read1:
+    type: file
+    extensions: [".fastq", ".fastq.gz", ".fq", ".fq.gz"]
+    label: "Read 1 FASTQ (R1)"
+    required: true
+    description: >
+      Forward reads (R1). Can be uncompressed (.fastq/.fq) or gzip-compressed (.fastq.gz/.fq.gz).
+      fastp auto-detects compression from file extension.
+
+  read2:
+    type: file
+    extensions: [".fastq", ".fastq.gz", ".fq", ".fq.gz"]
+    label: "Read 2 FASTQ (R2) — optional for single-end"
+    required: false
+    description: >
+      Reverse reads (R2) for paired-end sequencing. Leave empty for single-end data.
+      When provided, paired-end overlap analysis enables better adapter detection and correction.
+
+outputs:
+  out_read1:
+    type: file
+    extensions: [".fastq.gz"]
+    label: "Trimmed R1"
+    description: >
+      Quality-trimmed and adapter-removed forward reads, bgzip-compressed.
+
+  out_read2:
+    type: file
+    extensions: [".fastq.gz"]
+    label: "Trimmed R2"
+    description: >
+      Quality-trimmed and adapter-removed reverse reads, bgzip-compressed.
+      Only written when read2 input is provided.
+
+  html_report:
+    type: file
+    extensions: [".html"]
+    label: "HTML QC Report"
+    description: >
+      Interactive HTML report with quality score plots, GC content, adapter content,
+      insert-size distribution, duplication rate, and filtering statistics.
+
+  json_report:
+    type: file
+    extensions: [".json"]
+    label: "JSON QC Report"
+    description: >
+      Machine-readable JSON QC report. Consumed by MultiQC for aggregate reporting.
+      Contains all statistics available in the HTML report in structured format.
+
+command:
+  template: |
+    fastp \
+      --in1 {read1} \
+      --out1 {out_read1} \
+      {%- if read2 %} --in2 {read2} --out2 {out_read2} {%- endif %} \
+      --thread {threads} \
+      --length_required {min_length} \
+      {%- if max_length > 0 %} --length_limit {max_length} {%- endif %} \
+      --qualified_quality_phred {quality_threshold} \
+      --unqualified_percent_limit {unqualified_percent_limit} \
+      --n_base_limit {n_base_limit} \
+      {%- if cut_front %} --cut_front {%- endif %} \
+      {%- if cut_tail %} --cut_tail {%- endif %} \
+      {%- if cut_right %} --cut_right {%- endif %} \
+      {%- if cut_front or cut_tail or cut_right %}
+      --cut_window_size {cut_window_size} \
+      --cut_mean_quality {cut_mean_quality} \
+      {%- endif %} \
+      {%- if disable_adapter_trimming %} --disable_adapter_trimming {%- else %} \
+        {%- if detect_adapter_for_pe and read2 %} --detect_adapter_for_pe {%- endif %} \
+        {%- if detect_adapter_for_se and not read2 %} --detect_adapter_for_se {%- endif %} \
+        {%- if adapter_sequence %} --adapter_sequence {adapter_sequence} {%- endif %} \
+        {%- if adapter_sequence_r2 %} --adapter_sequence_r2 {adapter_sequence_r2} {%- endif %} \
+        {%- if adapter_fasta %} --adapter_fasta {adapter_fasta} {%- endif %} \
+      {%- endif %} \
+      {%- if disable_trim_poly_g %} --disable_trim_poly_g {%- elif trim_poly_g %} --trim_poly_g --poly_g_min_len {poly_g_min_len} {%- endif %} \
+      {%- if trim_poly_x %} --trim_poly_x --poly_x_min_len {poly_x_min_len} {%- endif %} \
+      {%- if low_complexity_filter %} --low_complexity_filter --complexity_threshold {complexity_threshold} {%- endif %} \
+      {%- if dedup %} --dedup --dup_calc_accuracy {dup_calc_accuracy} {%- endif %} \
+      {%- if umi %} --umi --umi_loc {umi_loc} {%- if umi_len > 0 %} --umi_len {umi_len} {%- endif %} --umi_prefix {umi_prefix} {%- if umi_skip > 0 %} --umi_skip {umi_skip} {%- endif %} {%- endif %} \
+      {%- if correction %} --correction --overlap_len_require {overlap_len_require} --overlap_diff_limit {overlap_diff_limit} --overlap_diff_percent_limit {overlap_diff_percent_limit} {%- endif %} \
+      {%- if trim_front1 > 0 %} --trim_front1 {trim_front1} {%- endif %} \
+      {%- if trim_tail1 > 0 %} --trim_tail1 {trim_tail1} {%- endif %} \
+      {%- if trim_front2 > 0 %} --trim_front2 {trim_front2} {%- endif %} \
+      {%- if trim_tail2 > 0 %} --trim_tail2 {trim_tail2} {%- endif %} \
+      {%- if max_len1 > 0 %} --max_len1 {max_len1} {%- endif %} \
+      {%- if max_len2 > 0 %} --max_len2 {max_len2} {%- endif %} \
+      {%- if disable_quality_filtering %} --disable_quality_filtering {%- endif %} \
+      {%- if disable_length_filtering %} --disable_length_filtering {%- endif %} \
+      --html {html_report} \
+      --json {json_report} \
+      --report_title "{report_title}"
+  shell: "/bin/bash"

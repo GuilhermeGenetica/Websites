@@ -1,0 +1,474 @@
+name: "SnpEff Annotate"
+id: "snpeff_annotate"
+version: "5.2"
+category: "Annotation"
+description: >
+  SnpEff + SnpSift functional annotation of SNVs and indels. SnpEff predicts variant
+  effects on genes and transcripts using Sequence Ontology (SO) consequence terms
+  (missense_variant, stop_gained, splice_donor_variant, etc.) based on Ensembl or
+  RefSeq gene models. SnpSift provides downstream clinical annotation using ClinVar,
+  dbSNP, gnomAD, CADD, and any other VCF-format database. Together they replace
+  ANNOVAR as a fully open-source, HGVS-compliant annotation pipeline.
+  Outputs HGVS c./p. notation, effect impact (HIGH/MODERATE/LOW/MODIFIER), gene name,
+  transcript ID, amino acid change, functional domain, and database cross-references.
+  Compatible with downstream tools expecting ANN or EFF INFO fields.
+  Citation: Cingolani et al. 2012 (doi:10.4161/fly.19695).
+author: "Pablo Cingolani"
+license: "LGPL-3.0"
+tags: [snpeff, snpsift, annotation, snv, indel, vcf, functional, hgvs, clinvar, dbsnp, cadd, open-source, gatk-compatible]
+
+install:
+  method: conda
+  conda_env: seqnode
+  conda_package: "snpsift=5.2"
+  conda_channels: [bioconda, conda-forge, defaults]
+  binary: snpEff
+  version_check: "snpEff -version 2>&1 | head -1"
+  size_estimate: "~200 MB (Java); databases auto-downloaded on first use (~500 MB–2 GB per genome)"
+  docs_url: "https://pcingola.github.io/SnpEff/"
+  notes: >
+    SnpEff and SnpSift are both installed via the snpsift conda package.
+    Database download: snpEff download GRCh38.p14 (downloads to ~/snpEff/data/ or snpeff.data.dir).
+    Alternatively, set snpeff_data_dir to point to pre-downloaded databases.
+    For offline operation, download the database: snpEff download -v GRCh38.p14
+    Available genome databases: GRCh38.p14, GRCh37.p13, hg38, hg19, GRCm39 (mouse), and 32,000+ others.
+    The ANN field format: Allele|Effect|Impact|GeneName|GeneId|FeatureType|FeatureId|TranscriptBiotype|...
+    SnpSift annotate adds database fields from ClinVar, dbSNP, gnomAD, etc.
+    SnpSift filter can apply expression-based filtering after annotation.
+    Java 11+ is required (bundled with conda installation).
+    ClinVar VCF must be bgzip-compressed and tabix-indexed for SnpSift annotate.
+  default_paths:
+    bin_path: "~/miniforge3/envs/seqnode/bin"
+    refs_path: ""
+    lib_path: ""
+  refs_required:
+    - key: clinvar_vcf
+      label: "ClinVar VCF (GRCh38)"
+      url: "https://ftp.ncbi.nlm.nih.gov/pub/clinvar/vcf_GRCh38/clinvar.vcf.gz"
+      subdir: "annotation/clinvar"
+      size: "~90 MB"
+    - key: dbsnp_vcf
+      label: "dbSNP VCF (GRCh38)"
+      url: "https://ftp.ncbi.nih.gov/snp/organisms/human_9606_b151_GRCh38p7/VCF/GATK/00-All.vcf.gz"
+      subdir: "annotation/dbsnp"
+      size: "~15 GB"
+
+runtime:
+  type: conda
+  conda_env: seqnode
+
+params:
+
+  # ── SnpEff Core ────────────────────────────────────────────────────────────
+  genome_db:
+    type: string
+    label: "SnpEff Genome Database (-v)"
+    default: "GRCh38.p14"
+    choices: ["GRCh38.p14", "GRCh37.p13", "hg38", "hg19", "GRCm39", "GRCm38.p6", "BDGP6.103"]
+    description: >
+      SnpEff annotation database name. Downloaded automatically on first use.
+      Recommended: 'GRCh38.p14' (Ensembl/GENCODE gene models for hg38).
+      'GRCh37.p13' for hg19/GRCh37 data.
+      Verify available databases: snpEff databases | grep GRCh38
+    category: "SnpEff"
+
+  snpeff_data_dir:
+    type: string
+    label: "SnpEff Data Directory (-dataDir)"
+    default: ""
+    description: >
+      Path to pre-downloaded SnpEff databases directory.
+      Default: ~/snpEff/data (SnpEff auto-downloads here on first run).
+      Override to point to a centralized database cache.
+      Leave empty to use SnpEff's default location.
+    category: "SnpEff"
+
+  java_memory:
+    type: string
+    label: "Java Max Heap (-Xmx)"
+    default: "8g"
+    description: >
+      Java heap memory for SnpEff and SnpSift (e.g. '8g', '16g').
+      SnpEff loads the entire gene database into memory.
+      Typical: 4–8g for genome-scale databases, 16g+ for very large genomes.
+    category: "SnpEff"
+
+  # ── Transcript Filtering ───────────────────────────────────────────────────
+  canon_only:
+    type: bool
+    label: "Canonical Transcripts Only (-canon)"
+    default: true
+    description: >
+      Report effects only for canonical (MANE Select or Ensembl canonical) transcripts.
+      Reduces output size and focuses on the most clinically relevant transcript.
+      Recommended for clinical reporting. Disable to see all transcript isoforms.
+    category: "Transcript Filtering"
+
+  canon_all_transcripts:
+    type: bool
+    label: "All Canonical + Selected Transcripts (-canonList)"
+    default: false
+    description: >
+      When a list file is provided, report canonical transcripts plus any
+      user-specified transcripts. Alternative to strict canon-only mode.
+    category: "Transcript Filtering"
+
+  preferred_transcripts_file:
+    type: string
+    label: "Preferred Transcripts List File (-canonList)"
+    default: ""
+    description: >
+      Path to a file with one preferred transcript ID per line.
+      These transcripts are always reported even when canon_only=true.
+      Useful for reporting MANE Plus Clinical transcripts alongside MANE Select.
+    category: "Transcript Filtering"
+
+  only_protein_coding:
+    type: bool
+    label: "Only Protein-coding Transcripts (-onlyProtein)"
+    default: false
+    description: >
+      Limit annotation to protein-coding transcripts only.
+      Ignores lncRNA, pseudogenes, and other non-coding transcripts.
+    category: "Transcript Filtering"
+
+  # ── Output Options ─────────────────────────────────────────────────────────
+  one_per_line:
+    type: bool
+    label: "One Effect Per Line (-onePerLine)"
+    default: false
+    description: >
+      Split multi-effect ANN annotations into one VCF line per effect.
+      Creates duplicate VCF records for variants affecting multiple transcripts.
+      Simplifies downstream parsing at the cost of larger files.
+    category: "Output"
+
+  one_effect_per_gene:
+    type: bool
+    label: "Pick Best Effect per Gene"
+    default: false
+    description: >
+      For each gene, report only the most severe predicted effect.
+      Reduces annotation verbosity; useful for gene-level analysis.
+    category: "Output"
+
+  output_format:
+    type: string
+    label: "Output Format"
+    default: "vcf"
+    choices: ["vcf", "gatk", "bed", "bedann", "txt"]
+    description: >
+      'vcf': standard VCF with ANN field (recommended).
+      'gatk': VCF format compatible with GATK variant tools.
+      'bed': BED format with annotation.
+      'bedann': BED with annotation columns.
+      'txt': tab-delimited text output.
+    category: "Output"
+
+  generate_html_stats:
+    type: bool
+    label: "Generate HTML Statistics (-stats)"
+    default: true
+    description: >
+      Generate an HTML summary statistics report showing variant counts,
+      effect type distribution, impact distribution, and per-chromosome counts.
+    category: "Output"
+
+  csv_stats:
+    type: bool
+    label: "Also Generate CSV Statistics (-csvStats)"
+    default: true
+    description: >
+      Generate CSV-format statistics in addition to HTML.
+      Useful for automated pipeline QC and MultiQC integration.
+    category: "Output"
+
+  no_downstream:
+    type: bool
+    label: "No Downstream Effect Annotation (-noDownstream)"
+    default: false
+    description: >
+      Do not annotate variants in downstream regulatory regions (downstream_gene_variant).
+      Reduces annotation volume for intergenic/downstream-heavy datasets.
+    category: "Output"
+
+  no_upstream:
+    type: bool
+    label: "No Upstream Effect Annotation (-noUpstream)"
+    default: false
+    description: >
+      Do not annotate variants in upstream regulatory regions (upstream_gene_variant).
+    category: "Output"
+
+  no_intron:
+    type: bool
+    label: "No Intronic Effect Annotation (-noIntron)"
+    default: false
+    description: >
+      Skip annotation of intronic variants (intron_variant).
+      Useful for exome pipelines to reduce output size.
+    category: "Output"
+
+  no_intergenic:
+    type: bool
+    label: "No Intergenic Effect Annotation (-noIntergenic)"
+    default: false
+    description: >
+      Skip annotation of intergenic variants (intergenic_region).
+      Recommended for exome pipelines to suppress non-genic variants.
+    category: "Output"
+
+  # ── HGVS Options ──────────────────────────────────────────────────────────
+  hgvs:
+    type: bool
+    label: "HGVS Notation (-hgvs)"
+    default: true
+    description: >
+      Add HGVS coding sequence (c.) and protein (p.) notation to ANN field.
+      Required for clinical reporting and compatibility with ACMG classification tools.
+      Increases runtime slightly.
+    category: "HGVS"
+
+  hgvs_1_letter:
+    type: bool
+    label: "Use 1-Letter Amino Acid Codes (-hgvs1LetterAa)"
+    default: false
+    description: >
+      Use single-letter amino acid codes in HGVS notation (e.g. p.A123T instead of p.Ala123Thr).
+      Some downstream tools require 3-letter codes; keep false unless specifically required.
+    category: "HGVS"
+
+  hgvs_old:
+    type: bool
+    label: "Use Old HGVS 1-based Notation (-hgvsOld)"
+    default: false
+    description: >
+      Use old 1-based HGVS codon notation instead of the current standard 0-based.
+      Keep false (use current standard) for compatibility with HGMD and ClinVar.
+    category: "HGVS"
+
+  # ── Annotation Filters ─────────────────────────────────────────────────────
+  min_af_population:
+    type: float
+    label: "Min Population Allele Frequency Filter"
+    default: 0.0
+    description: >
+      Filter out variants with known population allele frequency above this threshold.
+      Requires population frequency data in the database (gnomAD integration in SnpEff ≥5.x).
+      0.0: no frequency filter. 0.01: remove common variants >1% AF.
+    category: "Filters"
+
+  # ── SnpSift Annotation ─────────────────────────────────────────────────────
+  clinvar_vcf:
+    type: string
+    label: "ClinVar VCF for SnpSift (optional)"
+    default: ""
+    description: >
+      Path to bgzip-compressed, tabix-indexed ClinVar VCF.gz.
+      SnpSift annotate will add CLNSIG, CLNDN, CLNREVSTAT, and CLNHGVS fields
+      to the output VCF. Strongly recommended for clinical genetics workflows.
+      Leave empty to skip ClinVar annotation.
+    category: "SnpSift"
+
+  clinvar_fields:
+    type: string
+    label: "ClinVar Fields to Extract"
+    default: "CLNSIG,CLNREVSTAT,CLNDN,CLNDISDB,CLNHGVS,CLNVC"
+    description: >
+      Comma-separated ClinVar INFO fields to copy into the annotated VCF.
+      CLNSIG: Clinical significance (Pathogenic, Likely_pathogenic, etc.)
+      CLNREVSTAT: Review status (criteria_provided, reviewed_by_expert_panel, etc.)
+      CLNDN: Disease name from ClinVar submission.
+      CLNDISDB: Disease database cross-references (OMIM, MedGen, etc.)
+      CLNHGVS: HGVS expression from ClinVar.
+      CLNVC: Variant type in ClinVar.
+    category: "SnpSift"
+
+  dbsnp_vcf:
+    type: string
+    label: "dbSNP VCF for SnpSift rsID (optional)"
+    default: ""
+    description: >
+      Path to bgzip-compressed, tabix-indexed dbSNP VCF.gz for rsID annotation.
+      Adds rs identifiers to the VCF ID field.
+      Leave empty to skip dbSNP annotation.
+    category: "SnpSift"
+
+  extra_db_vcf:
+    type: string
+    label: "Additional Annotation VCF (optional)"
+    default: ""
+    description: >
+      Path to any additional bgzip-compressed, tabix-indexed VCF.gz for annotation.
+      Custom databases (gnomAD, COSMIC, CADD, etc.) can be applied here.
+      Leave empty to skip.
+    category: "SnpSift"
+
+  extra_db_fields:
+    type: string
+    label: "Fields to Extract from Additional VCF"
+    default: ""
+    description: >
+      Comma-separated INFO field names to extract from extra_db_vcf.
+      Example: 'AF_popmax,AN,AF_nfe' for gnomAD fields.
+      Leave empty to copy all INFO fields from the extra database VCF.
+    category: "SnpSift"
+
+  # ── SnpSift Filter ─────────────────────────────────────────────────────────
+  snpsift_filter_expression:
+    type: string
+    label: "SnpSift Filter Expression (optional)"
+    default: ""
+    description: >
+      SnpSift filter expression to apply AFTER all annotations.
+      Keeps only variants matching this expression.
+      Examples:
+      "(ANN[*].IMPACT = 'HIGH') || (ANN[*].IMPACT = 'MODERATE')" — keep high/moderate impact only.
+      "(dbNSFP_CADD_phred > 20)" — keep CADD-scored variants.
+      "(!exists CLNSIG) || (CLNSIG = 'Pathogenic')" — keep pathogenic or unclassified.
+      Leave empty to skip SnpSift filter step.
+    category: "SnpSift"
+
+  snpsift_filter_inverse:
+    type: bool
+    label: "Invert SnpSift Filter (-n)"
+    default: false
+    description: >
+      When true, REMOVE variants matching the filter expression (inverse selection).
+    category: "SnpSift"
+
+inputs:
+  vcf_in:
+    type: file
+    extensions: [".vcf", ".vcf.gz", ".bcf"]
+    label: "Input VCF"
+    required: true
+    description: >
+      Variant calls from GATK HaplotypeCaller, bcftools, DeepVariant, or similar.
+      Can be uncompressed, bgzip-compressed, or BCF format.
+      Should be normalized (bcftools norm) before annotation.
+
+outputs:
+  vcf_out:
+    type: file
+    extensions: [".vcf"]
+    label: "SnpEff Annotated VCF"
+    description: >
+      VCF with functional annotations in ANN INFO field.
+      ANN format: Allele|Effect|Impact|GeneName|GeneID|FeatureType|FeatureID|Biotype|Rank|HGVS.c|HGVS.p|...
+
+  stats_html:
+    type: file
+    extensions: [".html"]
+    label: "SnpEff Summary Statistics (HTML)"
+    description: >
+      HTML report with variant count table, effect type distribution pie chart,
+      impact distribution, amino acid changes, and per-chromosome variant counts.
+
+  stats_csv:
+    type: file
+    extensions: [".csv"]
+    label: "SnpEff Summary Statistics (CSV)"
+    description: >
+      CSV-format QC statistics for automated pipeline monitoring and MultiQC.
+
+  clinvar_annotated_vcf:
+    type: file
+    extensions: [".vcf"]
+    label: "Final VCF with All Annotations"
+    description: >
+      Final VCF after SnpEff + all SnpSift annotation steps and optional filtering.
+      Contains ANN, CLNSIG (ClinVar), and any other requested database fields.
+
+command:
+  template: |
+    set -euo pipefail
+    OUTDIR=$(dirname {vcf_out})
+    mkdir -p "$OUTDIR"
+
+    CURRENT_VCF="{vcf_in}"
+
+    # ── Step 1: SnpEff functional annotation ────────────────────────────────
+    snpEff -Xmx{java_memory} \
+      {%- if snpeff_data_dir %} -dataDir {snpeff_data_dir} {%- endif %} \
+      {genome_db} \
+      {%- if canon_only %} -canon {%- endif %} \
+      {%- if preferred_transcripts_file %} -canonList {preferred_transcripts_file} {%- endif %} \
+      {%- if only_protein_coding %} -onlyProtein {%- endif %} \
+      {%- if one_per_line %} -onePerLine {%- endif %} \
+      {%- if hgvs %} -hgvs {%- endif %} \
+      {%- if hgvs_1_letter %} -hgvs1LetterAa {%- endif %} \
+      {%- if hgvs_old %} -hgvsOld {%- endif %} \
+      {%- if no_downstream %} -noDownstream {%- endif %} \
+      {%- if no_upstream %} -noUpstream {%- endif %} \
+      {%- if no_intron %} -noIntron {%- endif %} \
+      {%- if no_intergenic %} -noIntergenic {%- endif %} \
+      {%- if generate_html_stats %} -stats {stats_html} {%- endif %} \
+      {%- if csv_stats %} -csvStats {stats_csv} {%- endif %} \
+      "$CURRENT_VCF" \
+      > {vcf_out}
+
+    CURRENT_VCF="{vcf_out}"
+
+    # ── Step 2: SnpSift ClinVar annotation ─────────────────────────────────
+    {%- if clinvar_vcf %}
+    TMP_CLINVAR="$OUTDIR/_tmp_clinvar_annotated.vcf"
+    SnpSift -Xmx{java_memory} annotate \
+      -info {clinvar_fields} \
+      {clinvar_vcf} \
+      "$CURRENT_VCF" \
+      > "$TMP_CLINVAR"
+    CURRENT_VCF="$TMP_CLINVAR"
+    echo "[SnpSift] ClinVar annotation applied."
+    {%- endif %}
+
+    # ── Step 3: SnpSift dbSNP rsID annotation ──────────────────────────────
+    {%- if dbsnp_vcf %}
+    TMP_DBSNP="$OUTDIR/_tmp_dbsnp_annotated.vcf"
+    SnpSift -Xmx{java_memory} annotate \
+      -id \
+      {dbsnp_vcf} \
+      "$CURRENT_VCF" \
+      > "$TMP_DBSNP"
+    CURRENT_VCF="$TMP_DBSNP"
+    echo "[SnpSift] dbSNP rsID annotation applied."
+    {%- endif %}
+
+    # ── Step 4: Additional database annotation ──────────────────────────────
+    {%- if extra_db_vcf %}
+    TMP_EXTRA="$OUTDIR/_tmp_extra_annotated.vcf"
+    SnpSift -Xmx{java_memory} annotate \
+      {%- if extra_db_fields %} -info {extra_db_fields} {%- endif %} \
+      {extra_db_vcf} \
+      "$CURRENT_VCF" \
+      > "$TMP_EXTRA"
+    CURRENT_VCF="$TMP_EXTRA"
+    echo "[SnpSift] Additional database annotation applied."
+    {%- endif %}
+
+    # ── Step 5: SnpSift filter ──────────────────────────────────────────────
+    {%- if snpsift_filter_expression %}
+    TMP_FILT="$OUTDIR/_tmp_filtered.vcf"
+    SnpSift -Xmx{java_memory} filter \
+      {%- if snpsift_filter_inverse %} -n {%- endif %} \
+      "{snpsift_filter_expression}" \
+      "$CURRENT_VCF" \
+      > "$TMP_FILT"
+    CURRENT_VCF="$TMP_FILT"
+    echo "[SnpSift] Filter applied: {snpsift_filter_expression}"
+    {%- endif %}
+
+    # ── Finalize ─────────────────────────────────────────────────────────────
+    if [ "$CURRENT_VCF" != "{clinvar_annotated_vcf}" ]; then
+      cp "$CURRENT_VCF" {clinvar_annotated_vcf}
+    fi
+
+    # Cleanup intermediates
+    rm -f "$OUTDIR/_tmp_*.vcf"
+
+    echo "[SnpEff] Annotation complete."
+    echo "Total variants annotated:"
+    grep -v '^#' {clinvar_annotated_vcf} | wc -l
+    echo "HIGH impact variants:"
+    grep -v '^#' {clinvar_annotated_vcf} | grep -c "IMPACT=HIGH" || echo "0"
+  shell: "/bin/bash"

@@ -1,0 +1,451 @@
+name: "CNVkit Batch"
+id: "cnvkit_batch"
+version: "0.9.11"
+category: "CNV Analysis"
+description: >
+  CNVkit — copy number variant detection from BAM files using a targeted sequencing
+  coverage model based on log2 coverage ratios and CBS (Circular Binary Segmentation)
+  or HMM-based segmentation. Designed for hybrid capture WES but also supports WGS
+  and amplicon panels. CNVkit batch integrates the full pipeline: target/antitarget
+  bin creation, coverage calculation, reference construction from normal BAMs,
+  log2 ratio fixing, CBS segmentation, and optional VCF/scatter/diagram output.
+  For germline CNV detection, combine with ExomeDepth (CNV Consensus plugin) for
+  improved sensitivity and specificity via dual-caller consensus.
+  Citation: Talevich et al. 2016 (doi:10.1371/journal.pcbi.1004873).
+author: "Eric Talevich"
+license: "Apache-2.0"
+tags: [cnv, cnvkit, bam, segmentation, cbs, hmm, wes, wgs, amplicon, germline, somatic, copy-number]
+
+install:
+  method: conda
+  conda_env: seqnode
+  conda_package: "cnvkit=0.9.11"
+  conda_channels: [bioconda, conda-forge, defaults]
+  binary: cnvkit.py
+  version_check: "cnvkit.py version 2>&1 | head -1"
+  size_estimate: "~120 MB (includes R, bioconductor-dnacopy, scipy, matplotlib)"
+  docs_url: "https://cnvkit.readthedocs.io/en/stable/"
+  notes: >
+    CNVkit requires:
+    1. A reference FASTA with .fai index for GC content normalization.
+    2. A BED file of target regions (capture kit) for hybrid mode.
+    3. One or more normal BAM files to build a pooled reference (recommended).
+    For single-sample without normals: use --normal (empty) with --method wgs or --method amplicon.
+    R dependencies required: DNAcopy (bioconductor-dnacopy), installed by conda.
+    Segmentation methods: CBS is the standard; hmm-germline is preferred for germline CNV detection.
+    The .cnr file contains per-bin log2 coverage ratios (unfixed, per target/antitarget).
+    The .cns file contains CBS-segmented copy number calls (post-segmentation).
+    For clinical reporting, use cnvkit.py call on .cns to assign integer copy numbers.
+    scatter/diagram plots require matplotlib (conda-installed with cnvkit).
+  default_paths:
+    bin_path: "~/miniforge3/envs/seqnode/bin"
+    refs_path: "~/cnv_work/00_refs"
+    lib_path: ""
+  refs_required:
+    - key: hg38
+      label: "hg38 FASTA (GC content normalization)"
+      url: "https://hgdownload.soe.ucsc.edu/goldenPath/hg38/bigZips/hg38.fa.gz"
+      subdir: "genomes/hg38"
+      index_cmd: "samtools faidx {ref_fa}"
+      size: "~3 GB compressed"
+
+runtime:
+  type: conda
+  conda_env: seqnode
+
+params:
+
+  # ── Reference & Method ─────────────────────────────────────────────────────
+  reference_fa:
+    type: string
+    label: "Reference FASTA (--fasta)"
+    default: "~/cnv_work/00_refs/genomes/hg38/hg38.fa"
+    description: >
+      Reference genome FASTA with .fai index. Used for GC content normalization
+      of coverage bins and for target bin design.
+      Must match the genome build used for BAM alignment.
+    category: "Reference"
+
+  method:
+    type: string
+    label: "Sequencing Method (--method)"
+    default: "hybrid"
+    choices: ["hybrid", "wgs", "amplicon"]
+    description: >
+      Defines the sequencing strategy and coverage calculation mode.
+      'hybrid': Targeted WES with capture kit (requires target_bed; uses on/off-target bins).
+      'wgs': Whole genome sequencing (no capture BED; uses fixed-size windows genome-wide).
+      'amplicon': Amplicon/panel sequencing (requires target_bed; no antitarget bins).
+    category: "Reference"
+
+  genome_build:
+    type: string
+    label: "Genome Build (--genome-build)"
+    default: "hg38"
+    choices: ["hg38", "hg19", "GRCh38", "GRCh37", "mm10", "mm9"]
+    description: >
+      Genome build name for sex chromosome normalization and centromere masking.
+      CNVkit uses this to apply appropriate filters for chromosome X/Y in female/male samples.
+    category: "Reference"
+
+  # ── Threading ──────────────────────────────────────────────────────────────
+  threads:
+    type: int
+    label: "Parallel Processes (--processes)"
+    default: 8
+    min: 1
+    description: >
+      Number of parallel processes for coverage calculation.
+      CNVkit parallelizes across samples during the coverage step.
+      Set to the number of input BAM files for maximum parallelism.
+    category: "Performance"
+
+  # ── Segmentation ───────────────────────────────────────────────────────────
+  segment_method:
+    type: string
+    label: "Segmentation Method (--segment-method)"
+    default: "cbs"
+    choices: ["cbs", "flasso", "haar", "none", "hmm", "hmm-tumor", "hmm-germline"]
+    description: >
+      Algorithm used for segmenting the log2 ratio coverage track.
+      'cbs': Circular Binary Segmentation (R/DNAcopy). Standard method for WES.
+      'hmm-germline': Hidden Markov Model optimized for germline CNV detection.
+          Best sensitivity for constitutional CNVs in WES — recommended for clinical genetics.
+      'hmm-tumor': HMM optimized for somatic tumor CNVs (handles subclonality).
+      'hmm': Generic HMM (manual parameter tuning required).
+      'flasso': Fused LASSO (alternative, smoother segmentation).
+      'haar': Haar wavelet segmentation (fast but less sensitive).
+      'none': Skip segmentation (output raw bins only).
+    category: "Segmentation"
+
+  # ── Reference Construction ─────────────────────────────────────────────────
+  male_reference:
+    type: bool
+    label: "Male Reference (--male-reference)"
+    default: false
+    description: >
+      Use when normal reference samples are male. Adjusts expected copy number
+      for chrX (1 copy instead of 2 in females). Incorrect setting causes
+      systematic offsets on X chromosome CNV calls.
+    category: "Reference"
+
+  cluster:
+    type: bool
+    label: "Cluster Normals for Reference (--cluster)"
+    default: false
+    description: >
+      Use k-means clustering to group normal samples by similarity before
+      building the reference. Useful when normals come from different batches
+      or capture kits that produce systematic coverage differences.
+    category: "Reference"
+
+  # ── Bin Sizing ─────────────────────────────────────────────────────────────
+  target_avg_size:
+    type: int
+    label: "Target Bin Avg Size (--target-avg-size)"
+    default: 267
+    min: 50
+    description: >
+      Average bin size (bp) for on-target regions. CNVkit splits target intervals
+      into sub-bins of approximately this size.
+      Smaller bins: higher resolution, more noise. Larger bins: smoother, less resolution.
+      Default 267 is appropriate for standard exome captures (~200–300 bp exons).
+    category: "Bins"
+
+  antitarget_avg_size:
+    type: int
+    label: "Antitarget Bin Avg Size (--antitarget-avg-size)"
+    default: 150000
+    min: 10000
+    description: >
+      Average bin size (bp) for off-target (antitarget) regions.
+      Off-target reads provide background coverage for normalization.
+      Default 150000 (150 kb) balances noise reduction and resolution.
+    category: "Bins"
+
+  antitarget_min_size:
+    type: int
+    label: "Antitarget Min Bin Size (--antitarget-min-size)"
+    default: 500
+    min: 0
+    description: >
+      Minimum size (bp) of an antitarget region to include.
+      Smaller antitarget bins are dropped to avoid noise from tiny inter-exon gaps.
+    category: "Bins"
+
+  # ── Coverage Filtering ─────────────────────────────────────────────────────
+  min_mapq:
+    type: int
+    label: "Min Mapping Quality (--min-mapq)"
+    default: 0
+    min: 0
+    max: 255
+    description: >
+      Minimum read mapping quality for read counting.
+      0: include all aligned reads. 20: only confident alignments.
+      Increase to 1 to exclude unmapped reads, or to 20 for stringent analysis.
+    category: "Coverage"
+
+  count_reads:
+    type: bool
+    label: "Use Raw Read Counts (--count-reads)"
+    default: false
+    description: >
+      Use raw read counts instead of average depth for bin coverage.
+      Useful for small panels or amplicon data where read counts are more
+      appropriate than depth estimates. Not recommended for standard WES.
+    category: "Coverage"
+
+  drop_low_coverage:
+    type: bool
+    label: "Drop Low Coverage Bins (--drop-low-coverage)"
+    default: true
+    description: >
+      Remove bins with very low coverage (depth < min_depth_cutoff) before
+      segmentation. Low-coverage bins add noise and can create false CNV calls.
+      Strongly recommended; disable only for diagnostic purposes.
+    category: "Coverage"
+
+  min_depth_cutoff:
+    type: float
+    label: "Min Depth Cutoff for Bin (--drop-low-coverage threshold)"
+    default: 0.0
+    description: >
+      Minimum average depth for a bin to be included when drop_low_coverage=true.
+      0.0: use CNVkit default (auto-calculated based on reference coverage).
+      Set explicitly (e.g. 5.0) for consistent filtering across runs.
+    category: "Coverage"
+
+  # ── Calling ────────────────────────────────────────────────────────────────
+  call_method:
+    type: string
+    label: "Copy Number Calling Method (--call)"
+    default: "threshold"
+    choices: ["none", "threshold", "clonal", "none"]
+    description: >
+      Post-segmentation copy number assignment method.
+      'none': do not call integer copy numbers (output log2 ratios only).
+      'threshold': assign copy numbers based on log2 ratio thresholds.
+      'clonal': assume clonal tumor (somatic only).
+      When 'threshold' is set, use call_thresholds to define boundaries.
+    category: "Calling"
+
+  call_thresholds:
+    type: string
+    label: "Copy Number Thresholds (--thresholds for call)"
+    default: "-1.1,-0.25,0.2,0.7"
+    description: >
+      Comma-separated log2 ratio thresholds for integer copy number assignment.
+      Default '-1.1,-0.25,0.2,0.7' assigns: <-1.1=CN0, -1.1–-0.25=CN1, -0.25–0.2=CN2,
+      0.2–0.7=CN3, ≥0.7=CN4. Adjust for tumor purity or ploidy if needed.
+    category: "Calling"
+
+  ploidy:
+    type: int
+    label: "Ploidy (--ploidy)"
+    default: 2
+    min: 1
+    description: >
+      Expected ploidy of the sample. 2 for diploid germline.
+      For tumor samples, set to the estimated tumor ploidy (e.g. 3 for triploid).
+    category: "Calling"
+
+  purity:
+    type: float
+    label: "Tumor Purity (--purity)"
+    default: 1.0
+    min: 0.01
+    max: 1.0
+    description: >
+      Tumor purity (fraction of tumor cells in the sample). 1.0 for germline/pure tumor.
+      For mixed tumor samples, set to the estimated purity (e.g. 0.6 for 60% tumor cells).
+      Affects copy number calling thresholds.
+    category: "Calling"
+
+  # ── Output ─────────────────────────────────────────────────────────────────
+  scatter_plot:
+    type: bool
+    label: "Generate Scatter Plot"
+    default: true
+    description: >
+      Generate a genome-wide scatter plot (PNG) of per-bin log2 ratios with segment calls.
+      Useful for visual QC of CNV calls. Requires matplotlib.
+    category: "Output"
+
+  diagram_plot:
+    type: bool
+    label: "Generate Chromosome Diagram (PDF)"
+    default: true
+    description: >
+      Generate a chromosome-arm-level summary diagram (PDF) of copy number gains/losses.
+      Good for clinical report review. Requires matplotlib and reportlab.
+    category: "Output"
+
+  vcf_output:
+    type: bool
+    label: "Export VCF Output"
+    default: true
+    description: >
+      Export segmented CNV calls in VCF format for compatibility with
+      AnnotSV and other SV/CNV annotation tools.
+    category: "Output"
+
+  short_names:
+    type: bool
+    label: "Shorten Long Gene Names (--short-names)"
+    default: true
+    description: >
+      Truncate long target names (e.g. multi-gene target regions) for
+      cleaner plotting and output tables.
+    category: "Output"
+
+  # ── Access (Mappability) ───────────────────────────────────────────────────
+  access_file:
+    type: string
+    label: "Accessible Regions BED (--access)"
+    default: ""
+    description: >
+      Path to a BED file defining accessible (mappable) regions in the genome.
+      CNVkit uses this to exclude unmappable regions from antitarget bins.
+      Pre-computed files available in CNVkit repository for hg38/hg19:
+      data/access-5k-mappable.hg38.bed
+      Leave empty to use CNVkit's built-in mappability estimates.
+    category: "Filtering"
+
+  annotate:
+    type: string
+    label: "Gene Annotation BED (--annotate)"
+    default: ""
+    description: >
+      Path to a BED file with gene names for target annotation.
+      When provided, CNVkit annotates target bins with gene names from this file.
+      Leave empty to use gene names from the target BED file itself.
+    category: "Filtering"
+
+inputs:
+  tumor_bams:
+    type: file
+    extensions: [".bam"]
+    label: "Sample BAM(s) (space-separated)"
+    required: true
+    description: >
+      One or more sample (tumor or germline case) BAM files.
+      Space-separate multiple files for batch processing.
+      All must be coordinate-sorted and indexed (.bai present alongside).
+
+  normal_bams:
+    type: file
+    extensions: [".bam"]
+    label: "Normal BAM(s) — optional"
+    required: false
+    description: >
+      Normal/reference BAM files for pooled reference construction.
+      Space-separate multiple normal BAMs.
+      More normals (≥5–10) produce a better, more stable reference.
+      Leave empty for tumor-only or single-sample mode.
+
+  target_bed:
+    type: file
+    extensions: [".bed"]
+    label: "Target BED (capture kit) — required for hybrid/amplicon"
+    required: false
+    description: >
+      Exome or panel capture kit BED file defining target intervals.
+      Required for 'hybrid' and 'amplicon' methods.
+      Columns: chr, start, end (4th column name is optional).
+
+  antitarget_bed:
+    type: file
+    extensions: [".bed"]
+    label: "Antitarget BED — optional, auto-generated"
+    required: false
+    description: >
+      Custom antitarget (off-target) region BED file.
+      If empty, CNVkit auto-generates antitarget bins from the complement
+      of the target BED restricted to accessible regions.
+
+outputs:
+  cns_file:
+    type: file
+    extensions: [".cns"]
+    label: "Segmented CNV Calls (.cns)"
+    description: >
+      CBS/HMM-segmented copy number segments. Tab-separated:
+      chromosome, start, end, gene, log2, depth, probes, weight, ci_lo, ci_hi.
+      Input for CNV Consensus plugin and AnnotSV annotation.
+
+  cnr_file:
+    type: file
+    extensions: [".cnr"]
+    label: "Binned Coverage Log2 Ratios (.cnr)"
+    description: >
+      Per-bin log2 coverage ratios (unfixed, before segmentation).
+      Tab-separated: chromosome, start, end, gene, log2, depth, weight.
+
+  vcf_out:
+    type: file
+    extensions: [".vcf"]
+    label: "VCF Output (optional)"
+    description: >
+      CNV calls in VCF format for use with AnnotSV, BEDtools, and GATK tools.
+
+  scatter_png:
+    type: file
+    extensions: [".png"]
+    label: "Scatter Plot (PNG)"
+    description: >
+      Genome-wide scatter plot of per-bin log2 ratios with overlaid segment calls.
+
+  diagram_pdf:
+    type: file
+    extensions: [".pdf"]
+    label: "Chromosome Diagram (PDF)"
+    description: >
+      Chromosome-arm summary diagram of copy number gains and losses.
+
+command:
+  template: |
+    set -euo pipefail
+    OUTDIR=$(dirname {cns_file})
+    mkdir -p "$OUTDIR"
+
+    # Build cnvkit.py batch command
+    cnvkit.py batch \
+      {tumor_bams} \
+      {%- if normal_bams %} --normal {normal_bams} {%- else %} --normal {%- endif %} \
+      --fasta {reference_fa} \
+      --method {method} \
+      --processes {threads} \
+      --segment-method {segment_method} \
+      {%- if target_bed %} --targets {target_bed} {%- endif %} \
+      {%- if antitarget_bed %} --antitargets {antitarget_bed} {%- endif %} \
+      {%- if access_file %} --access {access_file} {%- endif %} \
+      {%- if annotate %} --annotate {annotate} {%- endif %} \
+      --target-avg-size {target_avg_size} \
+      --antitarget-avg-size {antitarget_avg_size} \
+      --antitarget-min-size {antitarget_min_size} \
+      --min-mapq {min_mapq} \
+      {%- if count_reads %} --count-reads {%- endif %} \
+      {%- if drop_low_coverage %} --drop-low-coverage {%- endif %} \
+      {%- if male_reference %} --male-reference {%- endif %} \
+      {%- if cluster %} --cluster {%- endif %} \
+      {%- if short_names %} --short-names {%- endif %} \
+      {%- if scatter_plot %} --scatter {%- endif %} \
+      {%- if diagram_plot %} --diagram {%- endif %} \
+      --output-dir "$OUTDIR"
+
+    # Export VCF if requested
+    {%- if vcf_output %}
+    CNS_FILE=$(ls "$OUTDIR"/*.cns 2>/dev/null | head -1)
+    if [ -n "$CNS_FILE" ]; then
+      cnvkit.py export vcf "$CNS_FILE" \
+        --ploidy {ploidy} \
+        --sample-sex auto \
+        -o {vcf_out}
+      echo "[CNVkit] VCF exported: {vcf_out}"
+    fi
+    {%- endif %}
+
+    echo "[CNVkit] Batch complete. Output directory: $OUTDIR"
+    ls -lh "$OUTDIR"
+  shell: "/bin/bash"

@@ -1,0 +1,510 @@
+name: "BEDtools Intersect"
+id: "bedtools_intersect"
+version: "2.31.1"
+category: "Utilities"
+description: >
+  BEDtools comprehensive genomic interval arithmetic suite. Wraps the most commonly
+  used BEDtools subcommands: intersect (find overlapping intervals), subtract
+  (remove overlapping regions), window (expand intervals before comparison),
+  merge (merge overlapping/adjacent intervals), closest (find nearest non-overlapping feature),
+  coverage (compute base-level coverage of intervals), slop (expand intervals),
+  sort (sort BED files), and genomecov (genome-wide coverage histogram).
+  Essential utility for CNV/SV filtering against known region databases (segmental
+  duplications, centromeres, PAR, DGV, gnomAD-SV), target region restriction,
+  and general interval manipulation in genomic pipelines.
+  Citation: Quinlan & Hall 2010 (doi:10.1093/bioinformatics/btq033).
+author: "Aaron Quinlan"
+license: "MIT"
+tags: [bedtools, intersect, subtract, merge, bed, vcf, intervals, cnv, filter, coverage, closest]
+
+install:
+  method: conda
+  conda_env: seqnode
+  conda_package: "bedtools=2.31.1"
+  conda_channels: [bioconda, conda-forge, defaults]
+  binary: bedtools
+  version_check: "bedtools --version 2>&1 | head -1"
+  size_estimate: "~25 MB"
+  docs_url: "https://bedtools.readthedocs.io/en/latest/"
+  notes: >
+    BEDtools supports BED, VCF, GFF, GTF, and BAM as input formats.
+    For sorted algorithms (-sorted flag), inputs must be sorted by chromosome and
+    then by start position. Sort with: bedtools sort -i input.bed > sorted.bed
+    Chromosome order must be consistent between file_a and file_b when using -sorted.
+    For the 'genomecov' mode, a genome file (two-column: chr, size) is required.
+    Get genome sizes from UCSC or GATK sequence dictionary.
+    Create genome file: samtools view -H input.bam | grep '^@SQ' | awk '{print $2"\t"$3}' | sed 's/SN://;s/LN://' > genome.txt
+    BEDtools reads stdin when input is '-'. Use this for piping.
+    For BAM input (file_a only): BEDtools automatically handles BAM format.
+    All subcommands output plain text to stdout; output is redirected to output_bed.
+  default_paths:
+    bin_path: "~/miniforge3/envs/seqnode/bin"
+    refs_path: ""
+    lib_path: ""
+
+runtime:
+  type: conda
+  conda_env: seqnode
+
+params:
+
+  # ── Operation Mode ─────────────────────────────────────────────────────────
+  mode:
+    type: string
+    label: "BEDtools Operation Mode"
+    default: "intersect"
+    choices: ["intersect", "subtract", "window", "merge", "closest", "coverage", "slop", "sort", "complement", "genomecov"]
+    description: >
+      The BEDtools operation to perform:
+      'intersect': find overlapping intervals between A and B.
+      'subtract': remove regions in A that overlap B.
+      'window': intersect using a window extended by window_size bp on each side.
+      'merge': merge overlapping or adjacent intervals in A (ignores B).
+      'closest': find nearest non-overlapping feature in B for each interval in A.
+      'coverage': compute base-level coverage of B intervals by A.
+      'slop': expand intervals in A by flank_size bp on each side.
+      'sort': sort BED file A by chromosome then start position.
+      'complement': return intervals NOT covered by A (requires genome file).
+      'genomecov': compute genome-wide coverage histogram from BAM/BED A.
+    category: "Operation"
+
+  # ── Overlap Parameters (intersect / subtract / window) ─────────────────────
+  require_overlap_fraction:
+    type: float
+    label: "Min Overlap Fraction of A (-f)"
+    default: 0.0
+    min: 0.0
+    max: 1.0
+    description: >
+      Minimum fraction of the A interval that must overlap B for reporting.
+      0.0: any overlap (even 1 base). 0.5: at least 50% of A must overlap B.
+      1.0: A must be entirely contained within B.
+      Applies to 'intersect', 'subtract', and 'window' modes.
+    category: "Overlap"
+
+  require_overlap_fraction_b:
+    type: float
+    label: "Min Overlap Fraction of B (-F)"
+    default: 0.0
+    min: 0.0
+    max: 1.0
+    description: >
+      Minimum fraction of the B interval that must overlap A.
+      Analogous to require_overlap_fraction but applied to the B side.
+      Used together with require_overlap_fraction for reciprocal overlap.
+    category: "Overlap"
+
+  reciprocal:
+    type: bool
+    label: "Require Reciprocal Overlap (-r)"
+    default: false
+    description: >
+      Require that both A AND B meet their respective minimum overlap fractions (-f and -F).
+      If only -f is set and -r is enabled, both A and B must each have ≥-f overlap.
+      Most commonly used with -f 0.5 -r to require 50% reciprocal overlap (used in CNV analysis).
+    category: "Overlap"
+
+  either_direction:
+    type: bool
+    label: "Either Fraction Sufficient (-e)"
+    default: false
+    description: >
+      When both -f and -F are specified, require that EITHER (not both) meets its
+      fraction threshold. Alternative to -r.
+    category: "Overlap"
+
+  # ── Output Behavior (intersect) ────────────────────────────────────────────
+  invert:
+    type: bool
+    label: "Invert — Report Non-Overlapping A (-v)"
+    default: false
+    description: >
+      Report only entries in A that do NOT overlap B.
+      Inverts the selection logic: effectively a subtraction without -f requirements.
+      In 'intersect' mode: equivalent to 'subtract' with any overlap.
+      In 'subtract' mode: reports A regions that ARE in B (reverses subtract logic).
+    category: "Output Behavior"
+
+  write_original_a:
+    type: bool
+    label: "Write Original A Interval (-wa)"
+    default: true
+    description: >
+      Write the full original A record for each overlap, instead of the
+      intersection coordinates. Preserves A's name, score, and extra columns.
+      Recommended when the goal is to filter (keep/remove) A intervals.
+    category: "Output Behavior"
+
+  write_original_b:
+    type: bool
+    label: "Also Write Original B Interval (-wb)"
+    default: false
+    description: >
+      In addition to A, also append the original B record for each overlap.
+      Useful to know which B feature each A interval overlapped.
+      Results in wider output rows.
+    category: "Output Behavior"
+
+  left_outer_join:
+    type: bool
+    label: "Left Outer Join — Report All A (-loj)"
+    default: false
+    description: >
+      Report all A intervals, even those with no overlap in B.
+      Non-overlapping A intervals are reported with '.' for all B fields.
+      Equivalent to a SQL LEFT OUTER JOIN. Useful when you want to keep
+      all A intervals but annotate which ones overlap B.
+    category: "Output Behavior"
+
+  count_overlaps:
+    type: bool
+    label: "Report Overlap Count Only (-c)"
+    default: false
+    description: >
+      For each A interval, report only the COUNT of overlapping B features,
+      appended as the last column. Does not report the actual B intervals.
+      Useful for quickly assessing how many known variants overlap each CNV.
+    category: "Output Behavior"
+
+  report_n_bases:
+    type: bool
+    label: "Report N Bases Overlapping (-wo)"
+    default: false
+    description: >
+      Report the number of overlapping bases between each A-B pair as an
+      additional final column. Useful for quantifying overlap size.
+    category: "Output Behavior"
+
+  # ── Strand ────────────────────────────────────────────────────────────────
+  same_strand:
+    type: bool
+    label: "Same Strand Only (-s)"
+    default: false
+    description: >
+      Only report overlaps on the SAME strand as A (both + or both −).
+      Requires strand information (6th column) in both A and B files.
+      Relevant for RNA-seq annotations but not typically used for WES/WGS CNV analysis.
+    category: "Strand"
+
+  opposite_strand:
+    type: bool
+    label: "Opposite Strand Only (-S)"
+    default: false
+    description: >
+      Only report overlaps on the OPPOSITE strand from A.
+    category: "Strand"
+
+  # ── Window Mode ────────────────────────────────────────────────────────────
+  window_size:
+    type: int
+    label: "Window Size (bp) for 'window' Mode (-w)"
+    default: 1000
+    min: 0
+    description: >
+      In 'window' mode: add this many bp flanking on both sides of A intervals
+      before checking for overlap with B. A CNV at chr1:1000-2000 with window=500
+      will match any B feature at chr1:500-2500.
+      Use window_left and window_right for asymmetric extension.
+    category: "Window"
+
+  window_left:
+    type: int
+    label: "Left Window (upstream, bp) (-l)"
+    default: 0
+    min: 0
+    description: >
+      Left (upstream) window extension in bp for 'window' mode.
+      When set, overrides window_size for the left side.
+      Set 0 to use symmetric window_size.
+    category: "Window"
+
+  window_right:
+    type: int
+    label: "Right Window (downstream, bp) (-r)"
+    default: 0
+    min: 0
+    description: >
+      Right (downstream) window extension in bp for 'window' mode.
+    category: "Window"
+
+  # ── Merge Mode ────────────────────────────────────────────────────────────
+  merge_distance:
+    type: int
+    label: "Merge Gap Distance (bp) (-d)"
+    default: 0
+    min: -1
+    description: >
+      In 'merge' mode: merge intervals within this distance of each other.
+      0: only merge overlapping intervals (any overlap merges them).
+      -1: only merge bookended (adjacent, no gap) intervals.
+      100: merge intervals within 100 bp of each other.
+    category: "Merge"
+
+  merge_columns:
+    type: string
+    label: "Columns to Aggregate on Merge (-c)"
+    default: ""
+    description: >
+      Comma-separated column numbers to aggregate when merging intervals.
+      Example: '4,5' to aggregate columns 4 (name) and 5 (score).
+      Requires merge_operations to be set.
+    category: "Merge"
+
+  merge_operations:
+    type: string
+    label: "Aggregation Operations for Merge (-o)"
+    default: ""
+    description: >
+      Comma-separated operations for merge_columns aggregation.
+      Operations: 'collapse' (comma-join values), 'distinct', 'count',
+      'sum', 'min', 'max', 'mean', 'median', 'first', 'last'.
+      Must match the number of entries in merge_columns.
+      Example: 'collapse,sum' (collapse names, sum scores).
+    category: "Merge"
+
+  # ── Closest Mode ──────────────────────────────────────────────────────────
+  closest_k:
+    type: int
+    label: "K Closest Features (-k)"
+    default: 1
+    min: 1
+    description: >
+      In 'closest' mode: report the K closest B features for each A interval.
+      1: only the nearest feature. 5: the 5 nearest features.
+    category: "Closest"
+
+  closest_upstream_only:
+    type: bool
+    label: "Upstream Only (-iu)"
+    default: false
+    description: >
+      In 'closest' mode: only report B features upstream (5') of A.
+    category: "Closest"
+
+  closest_downstream_only:
+    type: bool
+    label: "Downstream Only (-id)"
+    default: false
+    description: >
+      In 'closest' mode: only report B features downstream (3') of A.
+    category: "Closest"
+
+  closest_exclude_overlaps:
+    type: bool
+    label: "Ignore Overlapping Features (-io)"
+    default: false
+    description: >
+      In 'closest' mode: ignore B features that overlap A. Report only
+      the nearest non-overlapping feature.
+    category: "Closest"
+
+  # ── Slop Mode ─────────────────────────────────────────────────────────────
+  flank_size:
+    type: int
+    label: "Flank Size (bp) for 'slop' Mode (-b)"
+    default: 100
+    min: 0
+    description: >
+      In 'slop' mode: extend each A interval by this many bp on both sides.
+      Useful for adding padding around target regions or CNV calls.
+      Use flank_left and flank_right for asymmetric extension.
+    category: "Slop"
+
+  flank_left:
+    type: int
+    label: "Left Flank (bp) (-l)"
+    default: 0
+    description: >
+      Left (5') extension in bp for 'slop' mode. Overrides flank_size for left side.
+    category: "Slop"
+
+  flank_right:
+    type: int
+    label: "Right Flank (bp) (-r)"
+    default: 0
+    description: >
+      Right (3') extension in bp for 'slop' mode. Overrides flank_size for right side.
+    category: "Slop"
+
+  # ── Sorted Algorithm ───────────────────────────────────────────────────────
+  chromosome_sort:
+    type: bool
+    label: "Use Sorted Merge Algorithm (-sorted)"
+    default: false
+    description: >
+      Enable the sorted merge algorithm for 'intersect', 'window', 'closest',
+      and 'coverage' operations. Requires both inputs to be sorted by chromosome
+      and start position in the same order.
+      Dramatically reduces memory usage and improves speed for large files.
+      Use only when both file_a and file_b are pre-sorted with bedtools sort.
+    category: "Performance"
+
+  # ── Genome File ────────────────────────────────────────────────────────────
+  genome_file:
+    type: string
+    label: "Genome Size File (-g)"
+    default: ""
+    description: >
+      Path to a two-column genome file (chromosome_name<TAB>chromosome_size).
+      Required for: 'slop' mode (to prevent intervals extending beyond chromosome ends),
+      'complement' mode (to compute uncovered regions), 'genomecov' mode.
+      Create with: samtools view -H input.bam | grep '^@SQ' | awk '{print $2"\t"$3}' | sed 's/SN://;s/LN://'
+    category: "Genome"
+
+  # ── Additional Filters ─────────────────────────────────────────────────────
+  min_overlap_bases:
+    type: int
+    label: "Min Overlap Bases (-wo min-overlap)"
+    default: 1
+    min: 1
+    description: >
+      Minimum number of bases of overlap required between A and B intervals.
+      Default 1 (any overlap). Set higher to require substantial overlaps.
+    category: "Overlap"
+
+  split_bam:
+    type: bool
+    label: "Treat BAM as Spliced (-split)"
+    default: false
+    description: >
+      When A is a BAM file: treat spliced reads (CIGAR N operations) as
+      separate exon blocks. Necessary for RNA-seq reads spanning introns.
+      Not needed for WES/WGS analysis.
+    category: "BAM"
+
+inputs:
+  file_a:
+    type: file
+    extensions: [".bed", ".vcf", ".vcf.gz", ".gff", ".gtf", ".tsv", ".bam"]
+    label: "File A (query intervals)"
+    required: true
+    description: >
+      Query file of genomic intervals in BED, VCF, GFF, GTF, BAM, or TSV format.
+      BEDtools auto-detects format. For BAM input, genomic coverage is computed.
+      In 'merge' and 'sort' modes, only file_a is used.
+
+  file_b:
+    type: file
+    extensions: [".bed", ".vcf", ".vcf.gz", ".gff", ".gtf", ".tsv"]
+    label: "File B (database/filter intervals) — optional for merge/sort"
+    required: false
+    description: >
+      Database or reference interval file for comparison with A.
+      Not used in 'merge', 'sort', 'slop', 'complement', or 'genomecov' modes.
+      Common B files: segmental duplication BED, DGV known CNV BED,
+      gnomAD-SV sites, capture kit BED, centromere/telomere exclusion BED.
+
+outputs:
+  output_bed:
+    type: file
+    extensions: [".bed", ".tsv", ".vcf", ".txt"]
+    label: "Operation Result"
+    description: >
+      Output file containing the results of the selected BEDtools operation.
+      Format depends on input format and operation mode.
+      BED output for most modes; VCF preserved if A was VCF.
+
+command:
+  template: |
+    {%- if mode == "merge" %}
+    {%- if file_b %}
+    cat {file_a} {file_b} | bedtools sort | bedtools merge \
+      {%- if merge_distance != 0 %} -d {merge_distance} {%- endif %} \
+      {%- if merge_columns %} -c {merge_columns} -o {merge_operations} {%- endif %} \
+      > {output_bed}
+    {%- else %}
+    bedtools sort -i {file_a} | bedtools merge \
+      {%- if merge_distance != 0 %} -d {merge_distance} {%- endif %} \
+      {%- if merge_columns %} -c {merge_columns} -o {merge_operations} {%- endif %} \
+      > {output_bed}
+    {%- endif %}
+
+    {%- elif mode == "sort" %}
+    bedtools sort -i {file_a} > {output_bed}
+
+    {%- elif mode == "subtract" %}
+    bedtools subtract \
+      -a {file_a} \
+      -b {file_b} \
+      {%- if require_overlap_fraction > 0 %} -f {require_overlap_fraction} {%- endif %} \
+      {%- if reciprocal %} -r {%- endif %} \
+      {%- if invert %} -v {%- endif %} \
+      {%- if same_strand %} -s {%- endif %} \
+      {%- if opposite_strand %} -S {%- endif %} \
+      {%- if chromosome_sort %} -sorted {%- endif %} \
+      > {output_bed}
+
+    {%- elif mode == "window" %}
+    bedtools window \
+      -a {file_a} \
+      -b {file_b} \
+      {%- if window_left > 0 or window_right > 0 %} -l {window_left} -r {window_right} {%- else %} -w {window_size} {%- endif %} \
+      {%- if invert %} -v {%- endif %} \
+      {%- if same_strand %} -sm {%- endif %} \
+      {%- if opposite_strand %} -Sm {%- endif %} \
+      {%- if write_original_a %} -wa {%- endif %} \
+      {%- if write_original_b %} -wb {%- endif %} \
+      > {output_bed}
+
+    {%- elif mode == "closest" %}
+    bedtools closest \
+      -a {file_a} \
+      -b {file_b} \
+      -k {closest_k} \
+      {%- if closest_upstream_only %} -iu {%- endif %} \
+      {%- if closest_downstream_only %} -id {%- endif %} \
+      {%- if closest_exclude_overlaps %} -io {%- endif %} \
+      {%- if same_strand %} -s {%- endif %} \
+      > {output_bed}
+
+    {%- elif mode == "coverage" %}
+    bedtools coverage \
+      -a {file_b} \
+      -b {file_a} \
+      {%- if same_strand %} -s {%- endif %} \
+      {%- if split_bam %} -split {%- endif %} \
+      > {output_bed}
+
+    {%- elif mode == "slop" %}
+    bedtools slop \
+      -i {file_a} \
+      -g {genome_file} \
+      {%- if flank_left > 0 or flank_right > 0 %} -l {flank_left} -r {flank_right} {%- else %} -b {flank_size} {%- endif %} \
+      > {output_bed}
+
+    {%- elif mode == "complement" %}
+    bedtools complement \
+      -i {file_a} \
+      -g {genome_file} \
+      > {output_bed}
+
+    {%- elif mode == "genomecov" %}
+    bedtools genomecov \
+      {%- if file_a.endswith('.bam') %} -ibam {file_a} {%- else %} -i {file_a} -g {genome_file} {%- endif %} \
+      > {output_bed}
+
+    {%- else %}
+    # intersect (default)
+    bedtools intersect \
+      -a {file_a} \
+      -b {file_b} \
+      {%- if invert %} -v {%- endif %} \
+      {%- if write_original_a %} -wa {%- endif %} \
+      {%- if write_original_b %} -wb {%- endif %} \
+      {%- if left_outer_join %} -loj {%- endif %} \
+      {%- if count_overlaps %} -c {%- endif %} \
+      {%- if report_n_bases %} -wo {%- endif %} \
+      {%- if require_overlap_fraction > 0 %} -f {require_overlap_fraction} {%- endif %} \
+      {%- if require_overlap_fraction_b > 0 %} -F {require_overlap_fraction_b} {%- endif %} \
+      {%- if reciprocal %} -r {%- endif %} \
+      {%- if either_direction %} -e {%- endif %} \
+      {%- if same_strand %} -s {%- endif %} \
+      {%- if opposite_strand %} -S {%- endif %} \
+      {%- if chromosome_sort %} -sorted {%- endif %} \
+      {%- if split_bam %} -split {%- endif %} \
+      > {output_bed}
+    {%- endif %}
+
+    echo "[BEDtools] {mode} complete: {output_bed}"
+    echo "Output lines: $(wc -l < {output_bed})"
+  shell: "/bin/bash"

@@ -1,0 +1,593 @@
+name: "BCFtools Filter"
+id: "bcftools_filter"
+version: "1.21"
+category: "Preprocessing"
+description: >
+  BCFtools comprehensive variant filtering and processing suite. Combines bcftools norm
+  (left-alignment, multi-allelic splitting), bcftools filter (expression-based soft/hard
+  filtering by QUAL, DP, AF, genotype), bcftools view (type/region/sample selection),
+  and bcftools annotate (adding/removing INFO/FORMAT fields, rsID annotation).
+  Produces a clean, normalized, indexed VCF/BCF for downstream annotation (VEP, SnpEff)
+  or clinical interpretation. Replaces Galaxy VCFtools Annotate + Filter steps with
+  modern, GATK-compatible tooling. Citation: Danecek et al. 2021 (doi:10.1093/gigascience/giab008).
+author: "Heng Li / BCFtools contributors (Wellcome Sanger Institute)"
+license: "MIT"
+tags: [bcftools, filter, vcf, bcf, quality, snv, indel, normalization, preprocessing, view, annotate, stats]
+
+install:
+  method: conda
+  conda_env: seqnode
+  conda_package: "bcftools=1.21"
+  conda_channels: [bioconda, conda-forge, defaults]
+  binary: bcftools
+  version_check: "bcftools --version 2>&1 | head -1"
+  size_estimate: "~25 MB"
+  docs_url: "https://samtools.github.io/bcftools/bcftools.html"
+  notes: >
+    BCFtools is the standard toolkit for VCF/BCF file manipulation.
+    The filter step uses bcftools filter with -i (include) or -e (exclude) expressions.
+    Expressions support: QUAL, INFO/DP, FORMAT/GQ, FORMAT/AD, FORMAT/AF, N_ALT, etc.
+    Typical exome filters: QUAL>=30, DP>=8, allele freq >=1%.
+    bcftools norm left-aligns indels and optionally splits multi-allelic sites.
+    For VQSR/CNN-based filtering use GATK VariantRecalibrator/CNNScoreVariants instead.
+    bcftools stats generates detailed statistics suitable for MultiQC aggregation.
+    All input VCF/BCF files must be bgzip-compressed and tabix-indexed for region queries.
+    Index command: bcftools index -t file.vcf.gz (tabix) or bcftools index file.bcf (CSI).
+  default_paths:
+    bin_path: "~/miniforge3/envs/seqnode/bin"
+    refs_path: ""
+    lib_path: ""
+
+runtime:
+  type: conda
+  conda_env: seqnode
+
+params:
+
+  # ── Normalization ──────────────────────────────────────────────────────────
+  normalize:
+    type: bool
+    label: "Normalize Variants (bcftools norm)"
+    default: true
+    description: >
+      Left-align and normalize indels (shift to the leftmost position), and
+      optionally split multi-allelic records. Strongly recommended before annotation.
+      Requires --reference_fa when enabled.
+    category: "Normalization"
+
+  reference_fa:
+    type: string
+    label: "Reference FASTA (for norm)"
+    default: ""
+    description: >
+      Path to the reference genome FASTA with .fai index. Required when normalize=true.
+      Used by bcftools norm -f to verify allele consistency and left-align indels.
+    category: "Normalization"
+
+  split_multiallelic:
+    type: string
+    label: "Split Multi-allelic Sites (-m)"
+    default: "-both"
+    choices: ["-both", "-snps", "-indels", "-any", "+both", "+snps", "+indels", "+any", ""]
+    description: >
+      Controls splitting or merging of multi-allelic sites during norm.
+      '-both': split both SNPs and indels into biallelic records (recommended).
+      '-snps': split SNP multiallelics only.
+      '-indels': split indel multiallelics only.
+      '+both': merge adjacent biallelic records into multiallelic.
+      Empty: do not split or merge.
+    category: "Normalization"
+
+  check_ref:
+    type: string
+    label: "Reference Mismatch Behaviour (-c)"
+    default: "s"
+    choices: ["e", "w", "x", "s", ""]
+    description: >
+      Action when ref allele mismatches reference FASTA during norm.
+      'e': error and exit. 'w': warn and continue. 'x': exclude record.
+      's': set REF to '.' and continue (lenient, default). Empty: no check.
+    category: "Normalization"
+
+  do_not_normalize:
+    type: bool
+    label: "Skip Left-alignment (--no-normalize)"
+    default: false
+    description: >
+      When normalize=true but this flag is set, only split/merge multi-allelic
+      sites without performing indel left-alignment. Useful when records are
+      already normalized.
+    category: "Normalization"
+
+  # ── Quality Filters ────────────────────────────────────────────────────────
+  min_qual:
+    type: float
+    label: "Min QUAL Score"
+    default: 30.0
+    description: >
+      Minimum variant quality score (Phred-scaled, VCF QUAL column).
+      QUAL represents the probability that the site is not variant.
+      30 = 99.9% confidence. 20 = 99%. Common thresholds: 20–50.
+    category: "Quality Filters"
+
+  min_depth:
+    type: int
+    label: "Min Total Read Depth (INFO/DP)"
+    default: 8
+    description: >
+      Minimum total read depth at variant site (INFO/DP or FORMAT/DP).
+      Low depth sites are unreliable for variant calling. Typical: 8–20x for WES.
+    category: "Quality Filters"
+
+  min_depth_format:
+    type: int
+    label: "Min Per-sample Depth (FORMAT/DP)"
+    default: 0
+    description: >
+      Minimum per-sample FORMAT/DP depth. Use when filtering multi-sample VCFs
+      and wanting to ensure each individual sample meets a depth threshold.
+      Set 0 to disable (use INFO/DP only).
+    category: "Quality Filters"
+
+  min_gq:
+    type: int
+    label: "Min Genotype Quality (FORMAT/GQ)"
+    default: 0
+    description: >
+      Minimum genotype quality score (FORMAT/GQ, Phred-scaled).
+      Low GQ indicates uncertainty in the called genotype.
+      Typical threshold: 20. Set 0 to disable.
+    category: "Quality Filters"
+
+  min_allele_freq:
+    type: float
+    label: "Min Allele Frequency (AF)"
+    default: 0.01
+    description: >
+      Minimum alternate allele frequency (0.01 = 1%). Calculated from
+      FORMAT/AD if available, otherwise INFO/AF or derived from INFO/DP.
+      Typical: 0.01–0.05 for germline WES. Set 0 to disable.
+    category: "Quality Filters"
+
+  max_allele_freq:
+    type: float
+    label: "Max Allele Frequency (AF)"
+    default: 0.0
+    description: >
+      Maximum alternate allele frequency. Useful to remove common variants
+      (e.g. <0.5 to exclude LOH events in somatic, or for rare-variant filtering).
+      Set 0 to disable.
+    category: "Quality Filters"
+
+  pass_only:
+    type: bool
+    label: "Keep PASS Only (FILTER column)"
+    default: true
+    description: >
+      Remove variants that do not have PASS in the FILTER column.
+      Records with '.' (missing) are also kept as they indicate unfiltered variants.
+      Disable if your caller does not set FILTER=PASS (e.g. DeepVariant with no FILTER step).
+    category: "Quality Filters"
+
+  min_alt_reads:
+    type: int
+    label: "Min Alt Read Count"
+    default: 0
+    description: >
+      Minimum number of reads supporting the alternate allele (from FORMAT/AD[1]).
+      Provides a hard count filter independent of allele frequency.
+      Typical: 3–5 alt reads for germline WES. Set 0 to disable.
+    category: "Quality Filters"
+
+  max_strand_bias:
+    type: float
+    label: "Max Strand Bias (FS or SB)"
+    default: 0.0
+    description: >
+      Maximum Fisher Strand bias (INFO/FS) or Strand Bias (INFO/SB).
+      FS > 60 typically indicates strand bias artifacts. Set 0 to disable.
+    category: "Quality Filters"
+
+  # ── Expression Filters ─────────────────────────────────────────────────────
+  exclude_expression:
+    type: string
+    label: "Exclude Expression (-e)"
+    default: ""
+    description: >
+      BCFtools filter expression to EXCLUDE variants. Supports full expression syntax:
+      INFO tags (INFO/DP, INFO/AF), FORMAT tags (FORMAT/GQ, FORMAT/AD[1]),
+      genotype shortcuts (GT='mis', GT='het'), logical operators (&&, ||, !).
+      Examples: 'INFO/DP<5' 'FORMAT/GQ<20 || FORMAT/DP<5' 'QUAL<30 && INFO/AF<0.1'
+      Leave empty to skip.
+    category: "Expression Filters"
+
+  include_expression:
+    type: string
+    label: "Include Expression (-i)"
+    default: ""
+    description: >
+      BCFtools filter expression to INCLUDE only matching variants.
+      Has higher priority than exclude_expression when both are set.
+      Examples: 'QUAL>=30 && INFO/DP>=10' 'TYPE="snp" && INFO/AF>0.05'
+      Leave empty to skip.
+    category: "Expression Filters"
+
+  soft_filter_name:
+    type: string
+    label: "Soft Filter Name (--soft-filter)"
+    default: ""
+    description: >
+      Instead of removing variants that fail filters, mark them with this
+      string in the FILTER column (soft filtering). Preserves all records
+      for downstream inspection. Leave empty for hard filtering (remove records).
+      Example: 'LowQual' 'FAIL_DP' 'lowDP_lowGQ'
+    category: "Expression Filters"
+
+  filter_mode:
+    type: string
+    label: "Filter Mode (--mode)"
+    default: "+"
+    choices: ["+", "x", "^"]
+    description: >
+      When soft_filter_name is set: '+' (default) appends to existing FILTER values.
+      'x': replaces existing FILTER values. '^': prepend the filter name.
+    category: "Expression Filters"
+
+  # ── Variant Type Filters ───────────────────────────────────────────────────
+  variant_type:
+    type: string
+    label: "Variant Type Filter (-v/-V)"
+    default: "all"
+    choices: ["all", "snps", "indels", "mnps", "other", "snps+indels"]
+    description: >
+      Keep only this variant type (bcftools view -v).
+      'snps': SNPs only. 'indels': insertions+deletions.
+      'mnps': multi-nucleotide polymorphisms. 'other': structural, symbolic.
+      'snps+indels': SNPs and indels (exclude MNPs and symbolic).
+      'all': keep all variant types (no type filter).
+    category: "Variant Filters"
+
+  exclude_type:
+    type: string
+    label: "Exclude Variant Type (-V)"
+    default: ""
+    choices: ["", "snps", "indels", "mnps", "other"]
+    description: >
+      Exclude this variant type from output. Complementary to variant_type.
+      Leave empty for no type exclusion.
+    category: "Variant Filters"
+
+  min_alleles:
+    type: int
+    label: "Min Number of Alleles (-m)"
+    default: 2
+    description: >
+      Keep only sites with at least this many alleles (REF + ALT counted together).
+      Default 2 (standard biallelic). Set 2 for at least one ALT allele.
+    category: "Variant Filters"
+
+  max_alleles:
+    type: int
+    label: "Max Number of Alleles (-M)"
+    default: 0
+    description: >
+      Keep only sites with at most this many alleles. Set 2 for biallelic only
+      (removes multi-allelic sites not yet split by norm). Set 0 to disable.
+    category: "Variant Filters"
+
+  known_only:
+    type: bool
+    label: "Known Variants Only (-k)"
+    default: false
+    description: >
+      Keep only variants with a non-missing ID field (known dbSNP/ClinVar rsIDs).
+      Useful for filtering to known variant databases after rsID annotation.
+    category: "Variant Filters"
+
+  novel_only:
+    type: bool
+    label: "Novel Variants Only (-n)"
+    default: false
+    description: >
+      Keep only variants with a missing ID field ('.'), i.e. not in dbSNP.
+      Useful for studying novel rare variants.
+    category: "Variant Filters"
+
+  # ── Region Filters ─────────────────────────────────────────────────────────
+  regions:
+    type: string
+    label: "Restrict to Regions (-r)"
+    default: ""
+    description: >
+      Comma-separated list of regions to restrict the analysis.
+      Format: 'chr1', 'chr1:1000-2000', 'chr1,chr2,chrX'.
+      For BED-file-based region filtering use regions_file.
+    category: "Region Filters"
+
+  regions_file:
+    type: string
+    label: "Regions BED File (-R)"
+    default: ""
+    description: >
+      Path to a BED or tab-delimited file with regions to include.
+      Requires tabix index for bgzip-compressed BED files.
+      All variants outside these regions will be removed.
+    category: "Region Filters"
+
+  targets:
+    type: string
+    label: "Target Regions (-t)"
+    default: ""
+    description: >
+      Comma-separated target regions (similar to -r but uses linear scanning,
+      compatible with unsorted positions). Slower than -r for large files.
+    category: "Region Filters"
+
+  targets_file:
+    type: string
+    label: "Targets BED File (-T)"
+    default: ""
+    description: >
+      Path to a BED file with target regions for linear scanning (-T flag).
+      Does not require tabix index. Use -R for faster indexed access.
+    category: "Region Filters"
+
+  # ── Sample Filters ─────────────────────────────────────────────────────────
+  samples:
+    type: string
+    label: "Select Samples (-s)"
+    default: ""
+    description: >
+      Comma-separated list of sample names to include in output.
+      Removes all other samples from FORMAT columns and recalculates INFO fields.
+      Leave empty to keep all samples.
+    category: "Sample Filters"
+
+  samples_file:
+    type: string
+    label: "Samples File (-S)"
+    default: ""
+    description: >
+      Path to a file with one sample name per line to include.
+      Prefix with '^' to exclude listed samples instead.
+    category: "Sample Filters"
+
+  genotype_filter:
+    type: string
+    label: "Genotype Filter (-g)"
+    default: ""
+    choices: ["", "hom", "het", "missing", "^hom", "^het", "^missing"]
+    description: >
+      Filter by genotype class across all samples.
+      'hom': keep only sites with at least one homozygous ALT sample.
+      'het': keep only sites with at least one heterozygous sample.
+      'missing': keep only sites with at least one missing genotype.
+      Prefix '^' to exclude that class. Leave empty for no genotype class filter.
+    category: "Sample Filters"
+
+  # ── Output Options ─────────────────────────────────────────────────────────
+  output_type:
+    type: string
+    label: "Output File Type (-O)"
+    default: "z"
+    choices: ["v", "z", "b", "u"]
+    description: >
+      'v': uncompressed VCF. 'z': bgzip-compressed VCF.gz (recommended).
+      'b': BCF compressed. 'u': uncompressed BCF (fastest pipe intermediate).
+    category: "Output"
+
+  write_index:
+    type: bool
+    label: "Write Tabix Index (--write-index)"
+    default: true
+    description: >
+      Automatically write a tabix (.tbi) or CSI index file alongside the output.
+      Required for downstream tools that need random access (VEP, GATK, IGV).
+    category: "Output"
+
+  threads:
+    type: int
+    label: "Compression Threads (--threads)"
+    default: 4
+    description: >
+      Number of threads for compression/decompression.
+      Does not parallelize variant processing itself (bcftools is single-threaded for filtering).
+    category: "Output"
+
+  # ── Annotation Options ─────────────────────────────────────────────────────
+  annotate_db_vcf:
+    type: string
+    label: "Annotation DB VCF (rsID, --annotate)"
+    default: ""
+    description: >
+      Path to a VCF.gz (tabix-indexed) to use as annotation source.
+      Commonly used with dbSNP to add rsIDs to the ID column.
+      Leave empty to skip annotation.
+    category: "Annotation"
+
+  annotate_columns:
+    type: string
+    label: "Annotation Columns (--columns)"
+    default: "ID"
+    description: >
+      Comma-separated list of VCF columns or INFO/FORMAT tags to copy from
+      the annotation DB VCF. 'ID' copies rsIDs. 'INFO/CAF' copies allele freq.
+      'INFO/CLNSIG' copies ClinVar significance. Multiple: 'ID,INFO/CAF,INFO/CLNSIG'.
+    category: "Annotation"
+
+  remove_info_fields:
+    type: string
+    label: "Remove INFO Fields (--remove)"
+    default: ""
+    description: >
+      Comma-separated list of INFO or FORMAT tags to strip from output.
+      Useful to reduce VCF size before final delivery.
+      Example: 'INFO/BaseQRankSum,INFO/ExcessHet,FORMAT/PL'
+    category: "Annotation"
+
+  # ── Stats ──────────────────────────────────────────────────────────────────
+  generate_stats:
+    type: bool
+    label: "Generate bcftools stats Report"
+    default: true
+    description: >
+      Run bcftools stats on the final filtered output and save a summary report.
+      Compatible with MultiQC for aggregate QC reporting.
+    category: "Stats"
+
+  stats_af_bins:
+    type: string
+    label: "AF Bins for Stats"
+    default: "0.1,0.5,1"
+    description: >
+      Comma-separated allele frequency bin thresholds for bcftools stats.
+      Used to stratify stats output by allele frequency. Default: '0.1,0.5,1'.
+    category: "Stats"
+
+inputs:
+  vcf_in:
+    type: file
+    extensions: [".vcf", ".vcf.gz", ".bcf"]
+    label: "Input VCF/BCF"
+    required: true
+    description: >
+      Input variant file. If bgzip-compressed (.vcf.gz or .bcf), must be
+      tabix/CSI indexed for region-based filtering to work.
+
+outputs:
+  vcf_out:
+    type: file
+    extensions: [".vcf.gz", ".vcf", ".bcf"]
+    label: "Filtered & Normalized VCF"
+    description: >
+      Final output after normalization and all active filters.
+      bgzip-compressed and tabix-indexed when output_type='z'.
+  filter_stats:
+    type: file
+    extensions: [".txt"]
+    label: "Filter Statistics Report"
+    description: >
+      bcftools stats summary: total sites, SNPs, indels, ts/tv ratio,
+      depth distribution, quality score distribution, indel length distribution.
+      Compatible with MultiQC.
+
+command:
+  template: |
+    set -euo pipefail
+    OUTDIR=$(dirname {vcf_out})
+    mkdir -p "$OUTDIR"
+
+    CURRENT_INPUT="{vcf_in}"
+    TMPDIR_WORK=$(mktemp -d --suffix=_bcftools_filter)
+    trap "rm -rf $TMPDIR_WORK" EXIT
+
+    # ── Step 1: Normalize (left-align + split multi-allelics) ──────────────
+    {%- if normalize %}
+    NORM_OUT="$TMPDIR_WORK/step1_norm.vcf.gz"
+    bcftools norm \
+      {%- if reference_fa %} -f {reference_fa} {%- endif %} \
+      {%- if split_multiallelic %} -m {split_multiallelic} {%- endif %} \
+      {%- if check_ref %} -c {check_ref} {%- endif %} \
+      {%- if do_not_normalize %} --no-normalize {%- endif %} \
+      --threads {threads} \
+      -O z -o "$NORM_OUT" \
+      "$CURRENT_INPUT"
+    bcftools index -t "$NORM_OUT"
+    CURRENT_INPUT="$NORM_OUT"
+    {%- endif %}
+
+    # ── Step 2: Annotate with rsIDs (optional) ─────────────────────────────
+    {%- if annotate_db_vcf %}
+    ANNOT_OUT="$TMPDIR_WORK/step2_annot.vcf.gz"
+    bcftools annotate \
+      --annotations {annotate_db_vcf} \
+      --columns {annotate_columns} \
+      {%- if remove_info_fields %} --remove {remove_info_fields} {%- endif %} \
+      --threads {threads} \
+      -O z -o "$ANNOT_OUT" \
+      "$CURRENT_INPUT"
+    bcftools index -t "$ANNOT_OUT"
+    CURRENT_INPUT="$ANNOT_OUT"
+    {%- endif %}
+
+    # ── Step 3: Filter by quality / depth / expression ─────────────────────
+    FILT_OUT="$TMPDIR_WORK/step3_filter.vcf.gz"
+    FILTER_EXPR="QUAL>={min_qual} && INFO/DP>={min_depth}"
+    {%- if min_gq > 0 %}
+    FILTER_EXPR="$FILTER_EXPR && FORMAT/GQ>={min_gq}"
+    {%- endif %}
+    {%- if min_depth_format > 0 %}
+    FILTER_EXPR="$FILTER_EXPR && FORMAT/DP>={min_depth_format}"
+    {%- endif %}
+    {%- if min_alt_reads > 0 %}
+    FILTER_EXPR="$FILTER_EXPR && FORMAT/AD[*:1]>={min_alt_reads}"
+    {%- endif %}
+
+    bcftools filter \
+      -i "$FILTER_EXPR" \
+      {%- if soft_filter_name %}
+      --soft-filter "{soft_filter_name}" \
+      --mode "{filter_mode}" \
+      {%- endif %} \
+      --threads {threads} \
+      -O z -o "$FILT_OUT" \
+      "$CURRENT_INPUT"
+    {%- if include_expression %}
+    TMP_INC="$TMPDIR_WORK/step3b_incl.vcf.gz"
+    bcftools filter -i '{include_expression}' --threads {threads} -O z -o "$TMP_INC" "$FILT_OUT"
+    bcftools index -t "$TMP_INC"
+    FILT_OUT="$TMP_INC"
+    {%- endif %}
+    {%- if exclude_expression %}
+    TMP_EXC="$TMPDIR_WORK/step3c_excl.vcf.gz"
+    bcftools filter -e '{exclude_expression}' --threads {threads} -O z -o "$TMP_EXC" "$FILT_OUT"
+    bcftools index -t "$TMP_EXC"
+    FILT_OUT="$TMP_EXC"
+    {%- endif %}
+    bcftools index -t "$FILT_OUT"
+    CURRENT_INPUT="$FILT_OUT"
+
+    # ── Step 4: View — type, allele count, PASS, region, sample filters ────
+    VIEW_CMD="bcftools view"
+    {%- if pass_only %} VIEW_CMD="$VIEW_CMD -f PASS,." {%- endif %}
+    {%- if variant_type != "all" and not exclude_type %}
+    VIEW_CMD="$VIEW_CMD -v {variant_type}"
+    {%- endif %}
+    {%- if exclude_type %}
+    VIEW_CMD="$VIEW_CMD -V {exclude_type}"
+    {%- endif %}
+    {%- if max_alleles > 0 %}
+    VIEW_CMD="$VIEW_CMD -M {max_alleles}"
+    {%- endif %}
+    {%- if min_alleles > 2 %}
+    VIEW_CMD="$VIEW_CMD -m {min_alleles}"
+    {%- endif %}
+    {%- if known_only %} VIEW_CMD="$VIEW_CMD -k" {%- endif %}
+    {%- if novel_only %} VIEW_CMD="$VIEW_CMD -n" {%- endif %}
+    {%- if genotype_filter %} VIEW_CMD="$VIEW_CMD -g {genotype_filter}" {%- endif %}
+    {%- if samples %} VIEW_CMD="$VIEW_CMD -s {samples}" {%- endif %}
+    {%- if samples_file %} VIEW_CMD="$VIEW_CMD -S {samples_file}" {%- endif %}
+    {%- if regions %} VIEW_CMD="$VIEW_CMD -r {regions}" {%- endif %}
+    {%- if regions_file %} VIEW_CMD="$VIEW_CMD -R {regions_file}" {%- endif %}
+    {%- if targets %} VIEW_CMD="$VIEW_CMD -t {targets}" {%- endif %}
+    {%- if targets_file %} VIEW_CMD="$VIEW_CMD -T {targets_file}" {%- endif %}
+    VIEW_CMD="$VIEW_CMD --threads {threads} -O {output_type} -o {vcf_out} $CURRENT_INPUT"
+    eval "$VIEW_CMD"
+
+    # ── Step 5: Index output ────────────────────────────────────────────────
+    {%- if write_index %}
+    bcftools index -t --threads {threads} {vcf_out}
+    {%- endif %}
+
+    # ── Step 6: Statistics report ───────────────────────────────────────────
+    {%- if generate_stats %}
+    bcftools stats \
+      --af-bins {stats_af_bins} \
+      --threads {threads} \
+      {vcf_out} > {filter_stats}
+    echo ">>> Variant counts after all filters:" >> {filter_stats}
+    bcftools view -H {vcf_out} | wc -l >> {filter_stats}
+    {%- endif %}
+
+    echo "[BCFtools] Filtering complete: {vcf_out}"
+  shell: "/bin/bash"

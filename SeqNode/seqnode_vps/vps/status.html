@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SeqNode-OS API Server</title>
+<style>
+  :root {
+    --bg: #0f1117; --card: #1a1d27; --border: #2d3148;
+    --accent: #4f8ef7; --green: #22c55e; --red: #ef4444;
+    --yellow: #f59e0b; --text: #e2e8f0; --muted: #64748b;
+    --font: 'Segoe UI', system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: var(--font); min-height: 100vh; }
+  header {
+    background: var(--card); border-bottom: 1px solid var(--border);
+    padding: 18px 32px; display: flex; align-items: center; gap: 14px;
+  }
+  .logo { font-size: 26px; }
+  .title { font-size: 20px; font-weight: 700; color: var(--accent); }
+  .subtitle { font-size: 13px; color: var(--muted); margin-top: 2px; }
+  main { max-width: 820px; margin: 40px auto; padding: 0 24px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 24px; }
+  @media(max-width:600px) { .grid { grid-template-columns: 1fr; } }
+  .card {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 10px; padding: 20px 22px;
+  }
+  .card-title { font-size: 12px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .06em; color: var(--muted); margin-bottom: 12px; }
+  .status-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+  .dot-green  { background: var(--green);  box-shadow: 0 0 6px var(--green); }
+  .dot-red    { background: var(--red);    box-shadow: 0 0 6px var(--red); }
+  .dot-yellow { background: var(--yellow); box-shadow: 0 0 6px var(--yellow); }
+  .dot-spin   { background: var(--yellow); animation: pulse 1s infinite; }
+  @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:.3; } }
+  .status-label { font-size: 14px; font-weight: 600; }
+  .status-detail { font-size: 12px; color: var(--muted); margin-left: 20px; margin-bottom: 6px; }
+  .info-row { font-size: 13px; margin-bottom: 6px; color: var(--muted); }
+  .info-row span { color: var(--text); font-weight: 500; }
+  .endpoints { list-style: none; }
+  .endpoints li { font-size: 12px; padding: 5px 0; border-bottom: 1px solid var(--border); display: flex; gap: 8px; }
+  .endpoints li:last-child { border-bottom: none; }
+  .method { font-size: 11px; font-weight: 700; padding: 2px 6px; border-radius: 4px; background: var(--border); color: var(--accent); font-family: monospace; }
+  .path { font-family: monospace; color: var(--text); }
+  .desc { color: var(--muted); margin-left: auto; }
+  .badge {
+    display: inline-block; padding: 3px 10px; border-radius: 20px;
+    font-size: 11px; font-weight: 700; text-transform: uppercase;
+  }
+  .badge-green { background: rgba(34,197,94,.15); color: var(--green); border: 1px solid rgba(34,197,94,.3); }
+  .badge-red   { background: rgba(239,68,68,.15);  color: var(--red);   border: 1px solid rgba(239,68,68,.3); }
+  .badge-yellow{ background: rgba(245,158,11,.15); color: var(--yellow); border: 1px solid rgba(245,158,11,.3); }
+  footer { text-align: center; color: var(--muted); font-size: 12px; margin: 32px 0 24px; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">🧬</div>
+  <div>
+    <div class="title">SeqNode-OS API Server</div>
+    <div class="subtitle">Bioinformatics Pipeline Execution Engine — <a href="https://seqnode.onnetweb.com">seqnode.onnetweb.com</a></div>
+  </div>
+</header>
+
+<main>
+  <div class="grid">
+
+    <!-- API Status -->
+    <div class="card">
+      <div class="card-title">API Engine Status</div>
+      <div class="status-row">
+        <div class="dot dot-spin" id="api-dot"></div>
+        <div class="status-label" id="api-label">Checking…</div>
+        <span id="api-badge"></span>
+      </div>
+      <div class="status-detail" id="api-detail">Contacting FastAPI backend…</div>
+      <div class="info-row" style="margin-top:10px">Version: <span id="api-version">—</span></div>
+      <div class="info-row">Uptime: <span id="api-uptime">—</span></div>
+      <div class="info-row">Plugins loaded: <span id="api-plugins">—</span></div>
+    </div>
+
+    <!-- WebSocket Status -->
+    <div class="card">
+      <div class="card-title">WebSocket</div>
+      <div class="status-row">
+        <div class="dot dot-spin" id="ws-dot"></div>
+        <div class="status-label" id="ws-label">Checking…</div>
+        <span id="ws-badge"></span>
+      </div>
+      <div class="status-detail" id="ws-detail">Connecting to wss://api.seqnode.onnetweb.com/ws/logs…</div>
+
+      <div class="card-title" style="margin-top:16px">Nginx</div>
+      <div class="status-row">
+        <div class="dot dot-green"></div>
+        <div class="status-label">Running</div>
+        <span class="badge badge-green">OK</span>
+      </div>
+      <div class="status-detail">nginx/1.24.0 (Ubuntu) serving this page</div>
+    </div>
+
+  </div>
+
+  <!-- API Endpoints Reference -->
+  <div class="card">
+    <div class="card-title">API Endpoints</div>
+    <ul class="endpoints">
+      <li><span class="method">GET</span> <span class="path">/api/plugins</span>    <span class="desc">List plugins</span></li>
+      <li><span class="method">GET</span> <span class="path">/api/settings</span>   <span class="desc">Get engine settings</span></li>
+      <li><span class="method">POST</span><span class="path">/api/execute</span>    <span class="desc">Execute workflow</span></li>
+      <li><span class="method">GET</span> <span class="path">/api/workflow/list</span><span class="desc">List saved workflows</span></li>
+      <li><span class="method">POST</span><span class="path">/api/workflow/save</span><span class="desc">Save workflow</span></li>
+      <li><span class="method">POST</span><span class="path">/api/workflow/validate</span><span class="desc">Validate workflow</span></li>
+      <li><span class="method">GET</span> <span class="path">/api/runs</span>        <span class="desc">Execution history</span></li>
+      <li><span class="method">WS</span>  <span class="path">/ws/logs</span>         <span class="desc">Real-time log stream</span></li>
+    </ul>
+  </div>
+
+</main>
+
+<footer>
+  SeqNode-OS &mdash; Oracle Cloud VPS &mdash; <span id="ts"></span>
+</footer>
+
+<script>
+document.getElementById('ts').textContent = new Date().toUTCString();
+
+// ── Check FastAPI health ──────────────────────────────────────────────────
+async function checkApi() {
+  try {
+    const r = await fetch('/api/system/info', { signal: AbortSignal.timeout(5000) });
+    const dot = document.getElementById('api-dot');
+    const lbl = document.getElementById('api-label');
+    const det = document.getElementById('api-detail');
+    const badge = document.getElementById('api-badge');
+
+    if (r.ok) {
+      const d = await r.json();
+      dot.className = 'dot dot-green';
+      lbl.textContent = 'Online';
+      badge.innerHTML = '<span class="badge badge-green">ONLINE</span>';
+      det.textContent = 'FastAPI backend responding normally.';
+      document.getElementById('api-version').textContent = d.version || d.seqnode_version || '—';
+      document.getElementById('api-uptime').textContent  = d.uptime   || '—';
+      document.getElementById('api-plugins').textContent = d.plugins_loaded ?? '—';
+    } else {
+      throw new Error('HTTP ' + r.status);
+    }
+  } catch (e) {
+    const dot = document.getElementById('api-dot');
+    dot.className = 'dot dot-red';
+    document.getElementById('api-label').textContent = 'Offline';
+    document.getElementById('api-badge').innerHTML = '<span class="badge badge-red">DOWN</span>';
+    document.getElementById('api-detail').textContent = e.message.includes('AbortError')
+      ? 'Timeout — FastAPI not responding.' : 'FastAPI backend is not running. Start it on the VPS.';
+  }
+}
+
+// ── Check WebSocket ───────────────────────────────────────────────────────
+function checkWs() {
+  try {
+    const ws  = new WebSocket('wss://api.seqnode.onnetweb.com/ws/logs');
+    const dot = document.getElementById('ws-dot');
+    const lbl = document.getElementById('ws-label');
+    const det = document.getElementById('ws-detail');
+    const badge = document.getElementById('ws-badge');
+
+    const t = setTimeout(() => {
+      ws.close();
+      dot.className = 'dot dot-red';
+      lbl.textContent = 'Timeout';
+      badge.innerHTML = '<span class="badge badge-red">DOWN</span>';
+      det.textContent = 'WebSocket did not connect within 5s.';
+    }, 5000);
+
+    ws.onopen = () => {
+      clearTimeout(t);
+      dot.className = 'dot dot-green';
+      lbl.textContent = 'Connected';
+      badge.innerHTML = '<span class="badge badge-green">OK</span>';
+      det.textContent = 'WebSocket handshake successful.';
+      ws.close();
+    };
+    ws.onerror = () => {
+      clearTimeout(t);
+      dot.className = 'dot dot-red';
+      lbl.textContent = 'Failed';
+      badge.innerHTML = '<span class="badge badge-red">DOWN</span>';
+      det.textContent = 'WebSocket connection refused. Check nginx proxy_upgrade config.';
+    };
+  } catch(e) {
+    document.getElementById('ws-label').textContent = 'Error';
+    document.getElementById('ws-detail').textContent = e.message;
+  }
+}
+
+checkApi();
+checkWs();
+</script>
+</body>
+</html>

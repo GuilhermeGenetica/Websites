@@ -1,0 +1,633 @@
+{
+  "id": "wf_exome_disease_v3",
+  "name": "Complete WES Pipeline — Genetic Disease v3.0",
+  "description": "Full whole-exome sequencing pipeline for genetic disease analysis: FASTQ → QC/Trim (FastP) → Alignment (BWA-MEM) → Duplicate Marking (Sambamba) → Coverage QC (mosdepth) → SNV/Indel Calling (GATK HaplotypeCaller) → Normalization + Hard-Filter (bcftools) → Functional Annotation (Ensembl VEP: SIFT, PolyPhen-2, gnomAD v4, ClinVar, HGVS, MANE, CADD/REVEL/AlphaMissense slots) → Excel TSV report (rare + HIGH/MODERATE impact) → SnpEff+SnpSift full annotated VCF (ANN field + ClinVar + dbSNP rsIDs) → CNV Calling (CNVkit hmm-germline + ExomeDepth beta-binomial) → Dual-Caller Consensus → Clinical CNV Annotation (AnnotSV: OMIM, ACMG, gnomAD-SV, pLI) → SegDup Filtering (bedtools). Outputs: (1) SNV Excel TSV with rare/pathogenic SNVs+indels annotated by VEP; (2) Full annotated SNV VCF from SnpEff+SnpSift for clinical records; (3) CNV AnnotSV TSV for Excel; (4) Filtered CNV BED (SegDup-clean). All 13 nodes use established bioinformatics plugins indexed in this project.",
+  "version": "3.0.0",
+  "author": "SeqNode-OS",
+  "nodes": [
+
+    {
+      "id": "n01_fastp",
+      "tool_id": "fastp_qc",
+      "label": "1 — FastP QC & Trim",
+      "notes": "FASTQ quality control, adapter auto-detection via PE overlap analysis, quality trimming (Q20 sliding window), poly-G tail removal (NovaSeq/NextSeq), overlap error correction. Produces trimmed FASTQs + HTML/JSON reports for MultiQC.",
+      "params": {
+        "threads": 8,
+        "detect_adapter_for_pe": true,
+        "adapter_sequence": "",
+        "adapter_sequence_r2": "",
+        "disable_adapter_trimming": false,
+        "quality_threshold": 20,
+        "unqualified_percent_limit": 40,
+        "n_base_limit": 5,
+        "cut_tail": true,
+        "cut_front": false,
+        "cut_right": false,
+        "cut_window_size": 4,
+        "cut_mean_quality": 20,
+        "min_length": 36,
+        "max_length": 0,
+        "trim_poly_g": true,
+        "disable_trim_poly_g": false,
+        "poly_g_min_len": 10,
+        "trim_poly_x": false,
+        "low_complexity_filter": false,
+        "dedup": false,
+        "correction": true,
+        "overlap_len_require": 30,
+        "overlap_diff_limit": 5,
+        "trim_front1": 0,
+        "trim_tail1": 0,
+        "trim_front2": 0,
+        "trim_tail2": 0,
+        "report_title": "SAMPLE — FastP QC Report"
+      },
+      "inputs_map": {
+        "read1": "/data/samples/SAMPLE_R1.fastq.gz",
+        "read2": "/data/samples/SAMPLE_R2.fastq.gz"
+      },
+      "outputs_map": {
+        "out_read1":    "/data/working/01_trimmed/SAMPLE_R1.trim.fastq.gz",
+        "out_read2":    "/data/working/01_trimmed/SAMPLE_R2.trim.fastq.gz",
+        "html_report":  "/data/output/00_qc/SAMPLE_fastp.html",
+        "json_report":  "/data/output/00_qc/SAMPLE_fastp.json"
+      },
+      "edges": ["n02_bwa"],
+      "position": {"x": 80, "y": 400},
+      "enabled": true
+    },
+
+    {
+      "id": "n02_bwa",
+      "tool_id": "bwa_mem",
+      "label": "2 — BWA-MEM Alignment",
+      "notes": "Align trimmed PE reads to hg38. Marks split-read secondary alignments (-M flag for Picard/GATK compatibility). Pipes to samtools sort + index in a single step. Read-group tags (SM, LB, PL, PU) are mandatory for GATK HaplotypeCaller.",
+      "params": {
+        "reference_fa":    "/data/references/genomes/hg38/hg38.fa",
+        "genome_build":    "hg38",
+        "sample_name":     "SAMPLE",
+        "library_id":      "LIB001",
+        "platform":        "ILLUMINA",
+        "platform_unit":   "FLOWCELL.1.SAMPLE",
+        "threads":         16,
+        "sort_threads":    4,
+        "sort_memory":     "2G",
+        "mark_secondary":  true,
+        "sort_output":     true,
+        "output_cram":     false
+      },
+      "inputs_map": {
+        "read1": "$n01_fastp.out_read1",
+        "read2": "$n01_fastp.out_read2"
+      },
+      "outputs_map": {
+        "bam_out": "/data/working/02_bam/SAMPLE.sorted.bam",
+        "bai_out": "/data/working/02_bam/SAMPLE.sorted.bam.bai"
+      },
+      "edges": ["n03_markdup"],
+      "position": {"x": 320, "y": 400},
+      "enabled": true
+    },
+
+    {
+      "id": "n03_markdup",
+      "tool_id": "sambamba_markdup",
+      "label": "3 — Sambamba Mark Duplicates",
+      "notes": "PCR duplicate marking (NOT removal). Broad Best Practices: GATK ignores marked duplicates automatically; keeping them preserves reads for re-analysis with different thresholds. Multi-threaded markdup + auto-index. remove_duplicates=false is intentional.",
+      "params": {
+        "threads":            8,
+        "remove_duplicates":  false,
+        "tmpdir":             "/tmp/seqnode/markdup",
+        "overflow_list_size": 200000,
+        "hash_table_size":    262144,
+        "io_buffer_size":     128,
+        "compression_level":  6,
+        "sort_buffer_size":   256,
+        "sort_output":        true,
+        "index_threads":      4,
+        "min_mapq":           0,
+        "show_progress":      false
+      },
+      "inputs_map": {
+        "bam_in": "$n02_bwa.bam_out"
+      },
+      "outputs_map": {
+        "bam_out": "/data/working/02_bam/SAMPLE.markdup.bam",
+        "bai_out": "/data/working/02_bam/SAMPLE.markdup.bam.bai"
+      },
+      "edges": ["n04_mosdepth", "n05_gatk_hc", "n09_cnvkit", "n10_exomedepth"],
+      "position": {"x": 560, "y": 400},
+      "enabled": true
+    },
+
+    {
+      "id": "n04_mosdepth",
+      "tool_id": "mosdepth_coverage",
+      "label": "4 — Coverage QC (mosdepth)",
+      "notes": "Target coverage statistics for WES QC. no_per_base=true eliminates the 5-30 GB per-base file (unnecessary for WES). Reports % bases at 10x/20x/30x clinical thresholds. Quantized bands for coverage visualization. MultiQC-compatible output.",
+      "params": {
+        "prefix":               "SAMPLE",
+        "threads":              4,
+        "use_bed_targets":      true,
+        "window_size":          0,
+        "min_base_quality":     0,
+        "min_mapping_quality":  20,
+        "no_per_base":          true,
+        "quantize":             "0:5:10:20:50:500",
+        "thresholds":           "1,5,10,15,20,30,50,100",
+        "use_median":           false,
+        "reference_fa":         "",
+        "flag_exclude":         1796
+      },
+      "inputs_map": {
+        "bam_in":      "$n03_markdup.bam_out",
+        "bed_targets": "/data/references/capture_kit/targets.bed"
+      },
+      "outputs_map": {
+        "coverage_bed":    "/data/output/00_qc/SAMPLE.regions.bed.gz",
+        "summary_txt":     "/data/output/00_qc/SAMPLE.mosdepth.summary.txt",
+        "dist_txt":        "/data/output/00_qc/SAMPLE.mosdepth.global.dist.txt",
+        "thresholds_bed":  "/data/output/00_qc/SAMPLE.thresholds.bed.gz"
+      },
+      "edges": [],
+      "position": {"x": 560, "y": 120},
+      "enabled": true
+    },
+
+    {
+      "id": "n05_gatk_hc",
+      "tool_id": "gatk_haplotypecaller",
+      "label": "5 — GATK HaplotypeCaller (SNV/Indel)",
+      "notes": "Germline SNV and indel calling via local haplotype assembly. emit_ref_confidence=GVCF produces joint-genotypable GVCFs (Broad Best Practice — supports future trio/family analysis via GenomicsDBImport + GenotypeGVCFs). Restricted to capture targets with 100 bp padding. Native AVX pair-HMM for speed.",
+      "params": {
+        "reference_fa":              "/data/references/genomes/hg38/hg38.fa",
+        "java_memory":               "8g",
+        "java_extra_opts":           "-XX:GCTimeLimit=50 -XX:GCHeapFreeLimit=10",
+        "emit_ref_confidence":       "GVCF",
+        "output_mode":               "EMIT_VARIANTS_ONLY",
+        "dbsnp_vcf":                 "/data/references/annotation/dbsnp/dbsnp_156_hg38.vcf.gz",
+        "stand_call_conf":           30.0,
+        "max_alternate_alleles":     6,
+        "min_base_quality_score":    10,
+        "heterozygosity":            0.001,
+        "indel_heterozygosity":      0.000125,
+        "contamination_fraction":    0.0,
+        "intervals":                 "/data/references/capture_kit/targets.bed",
+        "interval_padding":          100,
+        "exclude_intervals":         "",
+        "minimum_mapping_quality":   20,
+        "max_reads_per_alignment_start": 50,
+        "native_pair_hmm_threads":   4,
+        "pair_hmm_implementation":   "FASTEST_AVAILABLE",
+        "pcr_free":                  false,
+        "pcr_indel_model":           "CONSERVATIVE",
+        "annotation_groups":         "StandardAnnotation,StandardHCAnnotation",
+        "extra_annotations":         "",
+        "dont_use_soft_clipped_bases": false
+      },
+      "inputs_map": {
+        "bam_in": "$n03_markdup.bam_out"
+      },
+      "outputs_map": {
+        "vcf_out":   "/data/working/03_variants/SAMPLE.g.vcf.gz",
+        "vcf_index": "/data/working/03_variants/SAMPLE.g.vcf.gz.tbi"
+      },
+      "edges": ["n06_bcftools"],
+      "position": {"x": 800, "y": 300},
+      "enabled": true,
+      "notes_extended": "For single-sample analysis without family members, change emit_ref_confidence to 'NONE' to produce a final VCF directly. Use 'GVCF' when planning trio/family joint genotyping (requires additional GenomicsDBImport + GenotypeGVCFs steps outside this pipeline)."
+    },
+
+    {
+      "id": "n06_bcftools",
+      "tool_id": "bcftools_filter",
+      "label": "6 — BCFtools Normalize + Hard Filter",
+      "notes": "Left-align and split multi-allelic sites (norm -m -both). Hard-filter by quality (QUAL≥30), depth (INFO/DP≥10), genotype quality (FORMAT/GQ≥20), min alt reads (FORMAT/AD[1]≥3), and PASS only. Produces bgzip+tabix VCF.gz ready for VEP and SnpEff.",
+      "params": {
+        "normalize":           true,
+        "reference_fa":        "/data/references/genomes/hg38/hg38.fa",
+        "split_multiallelic":  "-both",
+        "check_ref":           "s",
+        "do_not_normalize":    false,
+        "min_qual":            30.0,
+        "min_depth":           10,
+        "min_depth_format":    0,
+        "min_gq":              20,
+        "min_allele_freq":     0.0,
+        "max_allele_freq":     0.0,
+        "pass_only":           true,
+        "min_alt_reads":       3,
+        "max_strand_bias":     0.0,
+        "exclude_expression":  "",
+        "include_expression":  "",
+        "soft_filter_name":    "",
+        "filter_mode":         "+",
+        "variant_type":        "all",
+        "exclude_type":        "",
+        "min_alleles":         2,
+        "max_alleles":         0,
+        "known_only":          false,
+        "novel_only":          false,
+        "output_type":         "z",
+        "write_index":         true,
+        "threads":             4,
+        "generate_stats":      true,
+        "stats_af_bins":       "0.1,0.5,1",
+        "annotate_db_vcf":     "",
+        "annotate_columns":    "ID",
+        "remove_info_fields":  ""
+      },
+      "inputs_map": {
+        "vcf_in": "$n05_gatk_hc.vcf_out"
+      },
+      "outputs_map": {
+        "vcf_out":      "/data/working/03_variants/SAMPLE.filtered.vcf.gz",
+        "filter_stats": "/data/output/00_qc/SAMPLE.bcftools_stats.txt"
+      },
+      "edges": ["n07_vep", "n08_snpeff"],
+      "position": {"x": 1040, "y": 300},
+      "enabled": true
+    },
+
+    {
+      "id": "n07_vep",
+      "tool_id": "ensembl_vep",
+      "label": "7 — VEP Annotation → Excel TSV",
+      "notes": "Gold-standard functional annotation with --everything: SIFT, PolyPhen-2, CADD, REVEL, AlphaMissense, SpliceAI (optional slots), gnomAD v4 exome+genome AF, ClinVar custom annotation, HGVS c./p., MANE Select, APPRIS, TSL, regulatory features. output_format=tab produces a tab-delimited TSV directly importable into Excel. filter_string restricts to rare variants (gnomAD MAX_AF<1%) with HIGH or MODERATE predicted impact — the clinician-facing variant report for genetic disease diagnosis.",
+      "params": {
+        "species":             "homo_sapiens",
+        "assembly":            "GRCh38",
+        "cache_dir":           "~/.vep",
+        "fasta":               "~/.vep/homo_sapiens/112_GRCh38/Homo_sapiens.GRCh38.dna.toplevel.fa",
+        "fork":                4,
+        "buffer_size":         5000,
+        "output_format":       "tab",
+        "compress_output":     false,
+        "offline":             true,
+        "merged":              false,
+        "refseq":              false,
+        "check_ref":           true,
+        "everything":          true,
+        "sift":                "b",
+        "polyphen":            "b",
+        "canonical":           true,
+        "mane":                true,
+        "tsl":                 true,
+        "appris":              true,
+        "hgvs":                true,
+        "hgvsg":               true,
+        "symbol":              true,
+        "numbers":             true,
+        "domains":             true,
+        "regulatory":          true,
+        "protein":             true,
+        "biotype":             true,
+        "uniprot":             true,
+        "ccds":                true,
+        "xref_refseq":         true,
+        "gencode_basic":       false,
+        "af":                  true,
+        "af_gnomade":          true,
+        "af_gnomadg":          true,
+        "max_af":              true,
+        "af_exac":             false,
+        "pubmed":              true,
+        "variant_class":       true,
+        "gene_phenotype":      true,
+        "check_existing":      true,
+        "pick":                false,
+        "pick_allele":         true,
+        "pick_order":          "canonical,tsl,biotype,rank,ccds,length",
+        "per_gene":            false,
+        "total_length":        true,
+        "allele_number":       true,
+        "no_escape":           true,
+        "shift_hgvs":          true,
+        "shift_genomic":       false,
+        "minimal":             true,
+        "exclude_null_alleles": false,
+        "allow_non_variant":   false,
+        "failed":              false,
+        "filter_common":       false,
+        "filter_string":       "MAX_AF < 0.01 and (IMPACT is HIGH or IMPACT is MODERATE)",
+        "clinvar_vcf":         "/data/references/annotation/clinvar/clinvar_grch38.vcf.gz",
+        "clinvar_fields":      "CLNSIG,CLNREVSTAT,CLNDN,CLNDISDB,CLNHGVS,CLNVC",
+        "cadd_snv":            "",
+        "cadd_indel":          "",
+        "revel_file":          "",
+        "alphamissense_file":  "",
+        "spliceai_snv":        "",
+        "spliceai_indel":      "",
+        "loftee_enabled":      false,
+        "loftee_ancestor_fa":  "",
+        "maxentscan_dir":      "",
+        "utr_annotator_enabled": false,
+        "dir_plugins":         "",
+        "custom_annotations":  "",
+        "stats_file":          true,
+        "no_stats":            false,
+        "force_overwrite":     true
+      },
+      "inputs_map": {
+        "vcf_in": "$n06_bcftools.vcf_out"
+      },
+      "outputs_map": {
+        "vcf_out":    "/data/output/05_snv_report/SAMPLE.SNV.vep_annotated.tsv",
+        "stats_html": "/data/output/00_qc/SAMPLE.vep_stats.html"
+      },
+      "edges": [],
+      "position": {"x": 1280, "y": 180},
+      "enabled": true,
+      "notes_extended": "OUTPUT IS EXCEL-READY: The .tsv file has one row per variant×consequence (MANE/canonical picked via pick_allele). Open directly in Excel or LibreOffice Calc. Columns include: Location, Allele, Gene, Feature, Consequence, IMPACT, HGVSc, HGVSp, SIFT, PolyPhen, gnomAD_AF, MAX_AF, ClinVar_CLNSIG, ClinVar_CLNDN, and more. To include all variants (no AF filter), clear filter_string. To add CADD/REVEL/AlphaMissense/SpliceAI, provide paths in respective params."
+    },
+
+    {
+      "id": "n08_snpeff",
+      "tool_id": "snpeff_annotate",
+      "label": "8 — SnpEff + SnpSift (Full Annotated VCF)",
+      "notes": "Adds Sequence Ontology ANN field (effect, impact, HGVS c./p.) to the VCF using canonical MANE transcripts only. SnpSift then annotates with ClinVar (CLNSIG, CLNDN, CLNREVSTAT, CLNDISDB, CLNHGVS) and dbSNP rsIDs. snpsift_filter_expression retains HIGH/MODERATE impact + any ClinVar-classified variant for clinical records. Output: full annotated VCF compatible with clinical databases and downstream interpretation tools.",
+      "params": {
+        "genome_db":                    "GRCh38.p14",
+        "snpeff_data_dir":              "",
+        "java_memory":                  "8g",
+        "canon_only":                   true,
+        "canon_all_transcripts":        false,
+        "preferred_transcripts_file":   "",
+        "only_protein_coding":          false,
+        "one_per_line":                 false,
+        "one_effect_per_gene":          false,
+        "output_format":                "vcf",
+        "generate_html_stats":          true,
+        "csv_stats":                    true,
+        "no_downstream":                false,
+        "no_upstream":                  false,
+        "no_intron":                    false,
+        "no_intergenic":                true,
+        "hgvs":                         true,
+        "hgvs_1_letter":                false,
+        "hgvs_old":                     false,
+        "min_af_population":            0.0,
+        "clinvar_vcf":                  "/data/references/annotation/clinvar/clinvar_grch38.vcf.gz",
+        "clinvar_fields":               "CLNSIG,CLNREVSTAT,CLNDN,CLNDISDB,CLNHGVS,CLNVC",
+        "dbsnp_vcf":                    "/data/references/annotation/dbsnp/dbsnp_156_hg38.vcf.gz",
+        "extra_db_vcf":                 "",
+        "extra_db_fields":              "",
+        "snpsift_filter_expression":    "(ANN[*].IMPACT = 'HIGH') || (ANN[*].IMPACT = 'MODERATE') || (exists CLNSIG)",
+        "snpsift_filter_inverse":       false
+      },
+      "inputs_map": {
+        "vcf_in": "$n06_bcftools.vcf_out"
+      },
+      "outputs_map": {
+        "vcf_out":               "/data/output/05_snv_report/SAMPLE.SNV.snpeff.vcf",
+        "stats_html":            "/data/output/00_qc/SAMPLE.snpeff_summary.html",
+        "stats_csv":             "/data/output/00_qc/SAMPLE.snpeff_summary.csv",
+        "clinvar_annotated_vcf": "/data/output/05_snv_report/SAMPLE.SNV.final_annotated.vcf"
+      },
+      "edges": [],
+      "position": {"x": 1280, "y": 420},
+      "enabled": true,
+      "notes_extended": "clinvar_annotated_vcf is the primary clinical output: it contains the full VEP-processed BCFtools-filtered variants + SnpEff ANN + SnpSift ClinVar + dbSNP rsIDs, filtered to HIGH/MODERATE/ClinVar-classified variants. This VCF is suitable for loading in Alamut Visual Plus, Franklin by Genoox, or any ACMG variant classification tool."
+    },
+
+    {
+      "id": "n09_cnvkit",
+      "tool_id": "cnvkit_batch",
+      "label": "9 — CNVkit (hmm-germline)",
+      "notes": "CNV detection by log2 coverage ratio segmentation. segment_method=hmm-germline is significantly more sensitive than CBS for constitutional germline CNVs in WES — recommended for genetic disease vs. CBS which is optimized for somatic tumor samples. Flat (no-normal) reference mode for single sample; provide normal BAMs for a pooled reference. Outputs scatter PNG + chromosome diagram PDF for clinical QC.",
+      "params": {
+        "reference_fa":         "/data/references/genomes/hg38/hg38.fa",
+        "method":               "hybrid",
+        "genome_build":         "hg38",
+        "threads":              8,
+        "segment_method":       "hmm-germline",
+        "male_reference":       false,
+        "cluster":              false,
+        "target_avg_size":      267,
+        "antitarget_avg_size":  150000,
+        "antitarget_min_size":  500,
+        "min_mapq":             0,
+        "count_reads":          false,
+        "drop_low_coverage":    true,
+        "min_depth_cutoff":     0.0,
+        "call_method":          "threshold",
+        "call_thresholds":      "-1.1,-0.25,0.2,0.7",
+        "ploidy":               2,
+        "purity":               1.0,
+        "scatter_plot":         true,
+        "diagram_plot":         true,
+        "vcf_output":           true,
+        "short_names":          true,
+        "access_file":          "",
+        "annotate":             ""
+      },
+      "inputs_map": {
+        "tumor_bams":    "$n03_markdup.bam_out",
+        "normal_bams":   "",
+        "target_bed":    "/data/references/capture_kit/targets.bed",
+        "antitarget_bed": ""
+      },
+      "outputs_map": {
+        "cns_file":    "/data/working/05_cnvkit/SAMPLE.cns",
+        "cnr_file":    "/data/working/05_cnvkit/SAMPLE.cnr",
+        "vcf_out":     "/data/working/05_cnvkit/SAMPLE.cnvkit.vcf",
+        "scatter_png": "/data/output/06_cnv_plots/SAMPLE.scatter.png",
+        "diagram_pdf": "/data/output/06_cnv_plots/SAMPLE.diagram.pdf"
+      },
+      "edges": ["n11_consensus"],
+      "position": {"x": 800, "y": 540},
+      "enabled": true
+    },
+
+    {
+      "id": "n10_exomedepth",
+      "tool_id": "exomedepth_cnv",
+      "label": "10 — ExomeDepth (Beta-Binomial)",
+      "notes": "Second orthogonal CNV caller using beta-binomial read-depth model. Leave-one-out reference selection maximises sensitivity by using the most correlated samples. min_bf=3.0 (lower than default 5.0) passes more candidates to the consensus step where dual-caller agreement is the final filter. min_num_exons=2 removes ~40% single-exon false positives from probe artefacts. save_counts_rds=true caches read counts for fast re-analysis.",
+      "params": {
+        "reference_fa":           "/data/references/genomes/hg38/hg38.fa",
+        "genome_build":           "hg38",
+        "transition_probability": 0.0001,
+        "expected_cnv_length":    50000,
+        "phi_bins":               1,
+        "test_counts_aggregate":  false,
+        "use_leave_one_out":      true,
+        "num_reference_samples":  0,
+        "custom_reference_bams":  "",
+        "min_bf":                 3.0,
+        "min_num_exons":          2,
+        "output_all_calls":       false,
+        "min_reads_ratio_delta":  0.0,
+        "include_chr_x":          true,
+        "include_chr_y":          false,
+        "sex_chr_mode":           "auto",
+        "output_mode":            "per_sample",
+        "save_counts_rds":        true,
+        "load_counts_rds":        "",
+        "save_counts_matrix_tsv": false,
+        "r_log_verbose":          true,
+        "add_sample_column":      true,
+        "r_seed":                 42,
+        "min_target_size":        1,
+        "normalise_gc":           true,
+        "max_targets_per_chrom":  0
+      },
+      "inputs_map": {
+        "bam_files":  "$n03_markdup.bam_out",
+        "target_bed": "/data/references/capture_kit/targets.bed"
+      },
+      "outputs_map": {
+        "exomedepth_tsv": "/data/working/06_exomedepth/SAMPLE.ExomeDepth.tsv",
+        "r_log":          "/data/output/00_qc/SAMPLE.exomedepth.log",
+        "counts_rds":     "/data/working/06_exomedepth/exomedepth_counts.rds"
+      },
+      "edges": ["n11_consensus"],
+      "position": {"x": 800, "y": 680},
+      "enabled": true
+    },
+
+    {
+      "id": "n11_consensus",
+      "tool_id": "cnv_consensus",
+      "label": "11 — CNV Dual-Caller Consensus",
+      "notes": "Merges CNVkit + ExomeDepth calls using reciprocal overlap (50%). Tags calls as BOTH (highest confidence), CNVkit-only, or ExomeDepth-only. BOTH calls require ≥50% reciprocal overlap + same CNV type. bf_threshold=5.0 is the final ExomeDepth filter after the relaxed min_bf=3.0 at calling. min_probes=3 eliminates single-bin CNVkit artefacts. output_format=tsv includes log2+BF+reads_ratio columns for clinical review. split_output_by_caller=true enables per-caller QC files.",
+      "params": {
+        "log2_threshold":         0.4,
+        "min_probes":             3,
+        "min_weight":             0.0,
+        "bf_threshold":           5.0,
+        "min_exons":              2,
+        "min_reads_ratio":        0.0,
+        "min_size_bp":            0,
+        "max_size_bp":            0,
+        "overlap_fraction":       0.5,
+        "require_same_type":      true,
+        "merge_distance":         500,
+        "output_format":          "tsv",
+        "include_single_caller":  true,
+        "require_both_callers":   false,
+        "annotate_genes":         true,
+        "split_output_by_caller": true,
+        "chromosome_sort":        "natural",
+        "add_confidence_score":   true,
+        "genome_build":           "GRCh38"
+      },
+      "inputs_map": {
+        "cnvkit_cns":      "$n09_cnvkit.cns_file",
+        "exomedepth_tsv":  "$n10_exomedepth.exomedepth_tsv"
+      },
+      "outputs_map": {
+        "consensus_bed":     "/data/working/07_consensus/SAMPLE.consensus.tsv",
+        "consensus_summary": "/data/output/00_qc/SAMPLE.consensus_summary.txt"
+      },
+      "edges": ["n12_annotsv", "n13_segdup_filter"],
+      "position": {"x": 1040, "y": 610},
+      "enabled": true
+    },
+
+    {
+      "id": "n12_annotsv",
+      "tool_id": "annotsv_annotate",
+      "label": "12 — AnnotSV Clinical CNV Annotation → Excel TSV",
+      "notes": "Clinical annotation of consensus CNVs with: OMIM disease genes, ClinVar pathogenic/VUS SVs, gnomAD-SV population frequencies, DGV known variants, pLI (haploinsufficiency) and pTriplo scores, ACMG/ClinGen evidence criteria, Decipher phenotypes. ranking_score_threshold=0.0 passes all calls (filter post-hoc in Excel). Output TSV is directly importable into Excel for clinical curation and ACMG classification.",
+      "params": {
+        "genome_build":              "GRCh38",
+        "sv_min_size":               50,
+        "tx_file":                   "",
+        "output_dir":                "/data/output/08_cnv_report",
+        "ranking_score_threshold":   0.0
+      },
+      "inputs_map": {
+        "input_bed": "$n11_consensus.consensus_bed"
+      },
+      "outputs_map": {
+        "output_tsv":         "/data/output/08_cnv_report/SAMPLE.CNV.annotsv.tsv",
+        "output_unannotated": "/data/output/08_cnv_report/SAMPLE.CNV.unannotated.tsv"
+      },
+      "edges": [],
+      "position": {"x": 1280, "y": 560},
+      "enabled": true,
+      "notes_extended": "OUTPUT IS EXCEL-READY: Open SAMPLE.CNV.annotsv.tsv directly in Excel. Key columns: AnnotSV_ranking (1-5), ACMG_class, Gene_name, ClinVar_pathogenicity, OMIM_morbid_gene, gnomAD_pLI, DGV_overlap, ClinVar_SV, SV_type (DEL/DUP), SV_length, Annotation_mode (full/split). Sort by AnnotSV_ranking DESC and ACMG_class to prioritise pathogenic/likely pathogenic CNVs."
+    },
+
+    {
+      "id": "n13_segdup_filter",
+      "tool_id": "bedtools_intersect",
+      "label": "13 — SegDup & PAR Filter",
+      "notes": "Removes consensus CNVs with ≥50% overlap with segmental duplications (UCSC genomicSuperDups) and pseudo-autosomal regions (PAR1/PAR2 on chrX/chrY). Segmental duplications cause systematic mapping artefacts producing false CNV calls. The 50% overlap threshold (require_overlap_fraction=0.5) retains real CNVs that partially overlap SegDup regions. Output is the clean, high-specificity CNV set for reporting.",
+      "params": {
+        "mode":                     "subtract",
+        "require_overlap_fraction": 0.5,
+        "require_overlap_fraction_b": 0.0,
+        "reciprocal":               false,
+        "either_direction":         false,
+        "invert":                   false,
+        "write_original_a":         true,
+        "write_original_b":         false,
+        "left_outer_join":          false,
+        "count_overlaps":           false,
+        "report_n_bases":           false,
+        "same_strand":              false,
+        "opposite_strand":          false,
+        "chromosome_sort":          false,
+        "window_size":              0,
+        "min_overlap_bases":        1
+      },
+      "inputs_map": {
+        "file_a": "$n11_consensus.consensus_bed",
+        "file_b": "/data/references/annotation/segdups/genomicSuperDups_hg38.bed"
+      },
+      "outputs_map": {
+        "output_bed": "/data/output/08_cnv_report/SAMPLE.CNV.filtered_nosegdup.bed"
+      },
+      "edges": [],
+      "position": {"x": 1280, "y": 720},
+      "enabled": true
+    }
+
+  ],
+
+  "global_params": {
+    "genome_build":   "hg38",
+    "reference_fa":   "/data/references/genomes/hg38/hg38.fa",
+    "capture_bed":    "/data/references/capture_kit/targets.bed",
+    "sample_name":    "SAMPLE",
+    "clinvar_vcf":    "/data/references/annotation/clinvar/clinvar_grch38.vcf.gz",
+    "dbsnp_vcf":      "/data/references/annotation/dbsnp/dbsnp_156_hg38.vcf.gz",
+    "vep_cache_dir":  "~/.vep",
+    "annotsv_share":  "~/miniforge3/envs/seqnode/share/AnnotSV",
+    "segdups_bed":    "/data/references/annotation/segdups/genomicSuperDups_hg38.bed"
+  },
+
+  "par_regions_hg38": {
+    "note": "Pseudo-Autosomal Regions for chrX/chrY filtering reference",
+    "chrX_PAR1": "chrX:60000-2699520",
+    "chrX_PAR2": "chrX:154931043-155260560",
+    "chrY_PAR1": "chrY:10000-2781479",
+    "chrY_PAR2": "chrY:59034049-59363566"
+  },
+
+  "pipeline_outputs_summary": {
+    "snv_excel_tsv":           "/data/output/05_snv_report/SAMPLE.SNV.vep_annotated.tsv",
+    "snv_final_annotated_vcf": "/data/output/05_snv_report/SAMPLE.SNV.final_annotated.vcf",
+    "snv_snpeff_vcf":          "/data/output/05_snv_report/SAMPLE.SNV.snpeff.vcf",
+    "cnv_excel_tsv":           "/data/output/08_cnv_report/SAMPLE.CNV.annotsv.tsv",
+    "cnv_filtered_bed":        "/data/output/08_cnv_report/SAMPLE.CNV.filtered_nosegdup.bed",
+    "coverage_summary":        "/data/output/00_qc/SAMPLE.mosdepth.summary.txt",
+    "fastp_html":              "/data/output/00_qc/SAMPLE_fastp.html",
+    "vep_stats_html":          "/data/output/00_qc/SAMPLE.vep_stats.html",
+    "cnvkit_scatter":          "/data/output/06_cnv_plots/SAMPLE.scatter.png",
+    "cnvkit_diagram":          "/data/output/06_cnv_plots/SAMPLE.diagram.pdf"
+  },
+
+  "tags": [
+    "exome", "wes", "genetic-disease", "clinical", "full-pipeline",
+    "snv", "indel", "gatk", "haplotypecaller", "gvcf",
+    "vep", "ensembl", "clinvar", "gnomad", "sift", "polyphen", "hgvs", "mane",
+    "snpeff", "snpsift", "ann-field",
+    "cnv", "cnvkit", "hmm-germline", "exomedepth", "beta-binomial", "consensus",
+    "annotsv", "omim", "acmg", "pli",
+    "mosdepth", "fastp", "bwa-mem", "sambamba",
+    "excel", "tsv", "report"
+  ]
+}

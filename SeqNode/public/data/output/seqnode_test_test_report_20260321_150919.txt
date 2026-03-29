@@ -1,0 +1,18 @@
+SeqNode-OS System Diagnostic Report
+Generated : 2026-03-21 15:09:19
+Hostname  : IdeaPadS145
+User      : ubuntu
+
+=== Parameters Received ===
+test_string  : Hello SeqNode!
+test_int     : 42
+test_float   : 3.14
+test_bool    : True
+test_choice  : normal
+test_file    : 
+input_dir    : 
+test_report  : /home/ubuntu/SEQNODE/frontend/data/output/seqnode_test_test_report_20260321_150919.txt
+
+=== Result ===
+Errors   : 0
+Warnings : 0

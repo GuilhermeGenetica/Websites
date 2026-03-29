@@ -1,0 +1,792 @@
+name: "CNV Consensus"
+id: "cnv_consensus"
+version: "1.2.0"
+category: "CNV Analysis"
+description: >
+  Merge and reconcile CNV calls from CNVkit (.cns) and ExomeDepth (.tsv) into a unified
+  consensus BED or TSV. Each output row is tagged with the caller(s) that detected it
+  (CNVkit, ExomeDepth, or BOTH). Overlapping calls from both callers are merged using
+  configurable reciprocal overlap fraction.
+  Features: log2 ratio threshold (CNVkit), Bayes factor threshold (ExomeDepth),
+  minimum exon count filter, minimum/maximum size filters, natural chromosome ordering,
+  per-chromosome summary, caller-specific single output, merge nearby same-caller calls,
+  VCF output format support, gene name propagation, and dual-caller confidence scoring.
+  Dual-caller (BOTH) calls have highest clinical confidence.
+  Equivalent to and significantly extending scriptGui.py FASE 8 (cnv_ensemble.py).
+author: "SeqNode"
+license: "MIT"
+tags: [cnv, consensus, ensemble, merge, cnvkit, exomedepth, dual-caller, clinical, bed, vcf]
+
+install:
+  method: system
+  binary: python3
+  version_check: "python3 --version 2>&1 | head -1"
+  size_estimate: "~0 MB (pure Python3, no external dependencies beyond stdlib)"
+  docs_url: ""
+  notes: >
+    Pure Python3 script with no external dependencies (uses only os, sys, json, re, math).
+    Reads CNVkit .cns (tab-separated: chromosome, start, end, gene, log2, depth, weight, ...)
+    and ExomeDepth .tsv (tab-separated with header — standard ExomeDepth output columns).
+    Column auto-detection: column names are matched case-insensitively from the header row.
+
+    CNVkit .cns columns detected: chromosome, start, end, gene, log2, depth, weight, probes.
+    ExomeDepth .tsv columns detected: chromosome/chr, start, end, type, BF/bayes.factor,
+      nexons, reads.expected, reads.observed, reads.ratio, id.
+
+    Call classification:
+      DEL: log2 < 0 (CNVkit) or type contains 'deletion' (ExomeDepth).
+      DUP: log2 > 0 (CNVkit) or type contains 'duplication' (ExomeDepth).
+
+    Output BED columns (standard):
+      chr, start, end, caller, type, score, size_bp, gene, nexons, confidence
+
+    Output TSV columns (extended):
+      All BED columns + log2_cnvkit, bf_exomedepth, depth_cnvkit, reads_ratio_exomedepth
+
+    Output VCF INFO fields (when output_format=vcf):
+      SVTYPE, CALLER, LOG2, BF, GENE, SVLEN, CONFIDENCE
+
+    Confidence score (0–2):
+      2: BOTH callers agree (highest confidence).
+      1: single caller, score above threshold.
+      0: single caller, borderline score (between threshold and 0.5× threshold).
+
+  default_paths:
+    bin_path: ""
+    refs_path: ""
+    lib_path: ""
+
+runtime:
+  type: system
+
+params:
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # CNVKIT THRESHOLDS
+  # ══════════════════════════════════════════════════════════════════════════
+
+  log2_threshold:
+    type: float
+    label: "CNVkit Log2 Ratio Threshold"
+    default: 0.4
+    min: 0.0
+    description: >
+      Minimum absolute log2 copy ratio to include a CNVkit segment as a CNV call.
+      log2 = log2(observed_depth / expected_depth).
+      Interpretation of absolute values:
+        0.2: borderline — shallow loss/gain; high noise sensitivity.
+        0.4: single-copy change in a diploid genome (deletion: log2 ≈ -1; duplication: log2 ≈ +0.58).
+             Recommended default for WES.
+        0.6: confident call — two or more copy changes, or purer tumour samples.
+        1.0: high-confidence homozygous deletion or high-level amplification.
+      Segments with |log2| < this threshold are excluded regardless of other filters.
+    category: "CNVkit Filtering"
+
+  min_probes:
+    type: int
+    label: "CNVkit Min Probes/Bins per Segment"
+    default: 0
+    min: 0
+    description: >
+      Minimum number of CNVkit bins (probes) spanning a segment for it to be included.
+      0: no minimum (include all segments regardless of probe count).
+      3: require at least 3 bins — reduces single-bin noise artefacts.
+      5: stringent threshold — good for WES with sparse baits.
+      This filter reads the 'probes' column from the .cns file if present.
+      Segments missing the 'probes' column are not filtered by this parameter.
+    category: "CNVkit Filtering"
+
+  min_weight:
+    type: float
+    label: "CNVkit Min Segment Weight"
+    default: 0.0
+    min: 0.0
+    description: >
+      Minimum segment weight from CNVkit CBS segmentation.
+      Weight reflects the fraction of probes without extreme GC or repeat content.
+      0.0: no filter. 0.1: exclude very low-quality segments. 0.5: high-quality only.
+      Requires the 'weight' column to be present in the .cns file.
+    category: "CNVkit Filtering"
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # EXOMEDEPTH THRESHOLDS
+  # ══════════════════════════════════════════════════════════════════════════
+
+  bf_threshold:
+    type: float
+    label: "ExomeDepth Bayes Factor Threshold"
+    default: 5.0
+    min: 0.0
+    description: >
+      Minimum Bayes factor (BF) to include an ExomeDepth CNV call.
+      The BF is the ratio of evidence for a copy number change vs. no change.
+      Interpretation:
+        BF ≥ 3:  suggestive — low confidence, exploratory analysis only.
+        BF ≥ 5:  moderate confidence — default for dual-caller input.
+        BF ≥ 10: strong evidence — recommended for single-caller clinical reporting.
+        BF ≥ 20: very strong — use when specificity is paramount.
+      ExomeDepth calls with BF < this threshold are excluded.
+    category: "ExomeDepth Filtering"
+
+  min_exons:
+    type: int
+    label: "ExomeDepth Min Exons per Call"
+    default: 1
+    min: 1
+    description: >
+      Minimum number of contiguous exons (nexons) required for an ExomeDepth CNV call.
+      1: include single-exon calls (highest sensitivity, more noise).
+      2: require at least 2 exons — significantly reduces single-probe noise.
+      3: conservative threshold — high specificity for clinical use.
+      Single-exon calls are common artefacts from ExomeDepth and should be
+      treated with caution even when BF is high.
+    category: "ExomeDepth Filtering"
+
+  min_reads_ratio:
+    type: float
+    label: "ExomeDepth Min Reads Ratio"
+    default: 0.0
+    min: 0.0
+    description: >
+      Minimum reads.ratio (observed/expected) deviation from 1.0.
+      0.0: no filter (use BF alone).
+      Example: 0.3 would require reads.ratio ≤ 0.7 (deletion) or ≥ 1.3 (duplication).
+      Provides an orthogonal depth-based filter in addition to BF.
+      Note: reads.ratio column must be present in the ExomeDepth TSV.
+    category: "ExomeDepth Filtering"
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # SIZE FILTERS
+  # ══════════════════════════════════════════════════════════════════════════
+
+  min_size_bp:
+    type: int
+    label: "Minimum CNV Size (bp)"
+    default: 0
+    min: 0
+    description: >
+      Minimum size in base pairs to include a CNV call in the consensus output.
+      0: no minimum size filter.
+      500: exclude very small artefacts (<500 bp).
+      1000: require ≥1 kb — appropriate for WES where resolution is limited to exon units.
+      Applied after caller-specific thresholds, before overlap merging.
+    category: "Size Filters"
+
+  max_size_bp:
+    type: int
+    label: "Maximum CNV Size (bp)"
+    default: 0
+    min: 0
+    description: >
+      Maximum size in base pairs. CNVs larger than this threshold are excluded.
+      0: no upper limit (include chromosome-arm events).
+      50000000: exclude events >50 Mb (likely whole-arm or whole-chromosome artefacts from WES).
+      Useful for removing whole-chromosome gains/losses that may represent data quality issues
+      rather than true somatic/germline events in exome data.
+    category: "Size Filters"
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # OVERLAP / MERGING
+  # ══════════════════════════════════════════════════════════════════════════
+
+  overlap_fraction:
+    type: float
+    label: "Reciprocal Overlap Fraction for Consensus"
+    default: 0.5
+    min: 0.01
+    max: 1.0
+    description: >
+      Minimum reciprocal overlap fraction required between a CNVkit and ExomeDepth
+      call to be considered the same event and merged as a BOTH call.
+      Reciprocal overlap = the overlap must cover ≥ this fraction of BOTH intervals.
+      0.5: 50% overlap required in each direction (default — appropriate for WES
+           where caller coordinates differ by exon boundary resolution).
+      0.7: stricter — 70% reciprocal overlap required (closer coordinate agreement).
+      0.3: permissive — useful when caller coordinates diverge significantly
+           (e.g. ExomeDepth reports exon-level, CNVkit reports probe-level).
+      Formula: overlap_len / len_A ≥ frac AND overlap_len / len_B ≥ frac.
+    category: "Overlap"
+
+  require_same_type:
+    type: bool
+    label: "Require Same CNV Type for Overlap"
+    default: true
+    description: >
+      When merging overlapping calls from the two callers, require both to report
+      the same CNV type (DEL/DEL or DUP/DUP).
+      True: a CNVkit DEL overlapping an ExomeDepth DUP is NOT merged (each kept as single-caller).
+      False: overlapping calls of any type are merged — permissive mode for complex events.
+      Recommended: true for germline CNV calling; false for exploratory analysis.
+    category: "Overlap"
+
+  merge_distance:
+    type: int
+    label: "Same-Caller Pre-Merge Distance (bp)"
+    default: 0
+    min: 0
+    description: >
+      Merge nearby calls from the SAME caller that are within this distance (bp)
+      before performing inter-caller consensus.
+      0: do not merge nearby calls (treat each CBS segment independently).
+      500: merge calls within 500 bp — joins segments split across a low-coverage gap.
+      Useful when CNVkit produces fragmented segments across a single deletion.
+      Applied independently to CNVkit calls and ExomeDepth calls before consensus.
+    category: "Overlap"
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # OUTPUT CONTROL
+  # ══════════════════════════════════════════════════════════════════════════
+
+  output_format:
+    type: string
+    label: "Output Format"
+    default: "bed"
+    choices: ["bed", "tsv", "vcf"]
+    description: >
+      Format of the consensus output file.
+      'bed': standard 6+ column BED file with header.
+             Columns: chr, start, end, caller, type, score, size_bp, gene, nexons, confidence.
+             Directly compatible with AnnotSV -SVinputFile.
+      'tsv': extended tab-delimited TSV with all metadata columns.
+             Columns: all BED columns + log2_cnvkit, bf_exomedepth,
+             depth_cnvkit, reads_ratio_exomedepth.
+             Best for downstream R/Python analysis or Excel review.
+      'vcf': VCF-format output for tools expecting VCF SV input.
+             CHROM POS ID REF ALT QUAL FILTER INFO columns.
+             INFO includes: SVTYPE, END, SVLEN, CALLER, LOG2, BF, GENE, CONFIDENCE.
+             Compatible with AnnotSV VCF input mode.
+    category: "Output"
+
+  include_single_caller:
+    type: bool
+    label: "Include Single-Caller Calls"
+    default: true
+    description: >
+      Include CNVs detected by only one caller (CNVkit-only or ExomeDepth-only).
+      True: output all calls — BOTH + single-caller (recommended for high sensitivity).
+      False: output only BOTH calls — highest specificity, may miss real events
+             especially at the boundaries of caller detection capabilities.
+      For clinical reporting, BOTH calls should be prioritised but single-caller
+      calls should still be reviewed if supported by orthogonal evidence.
+    category: "Output"
+
+  require_both_callers:
+    type: bool
+    label: "Require Both Callers (BOTH only)"
+    default: false
+    description: >
+      Shortcut equivalent to include_single_caller=false.
+      Only output CNVs detected by BOTH CNVkit and ExomeDepth.
+      Highest specificity setting — recommended for automated reporting pipelines
+      where manual review is limited. Overrides include_single_caller when true.
+    category: "Output"
+
+  annotate_genes:
+    type: bool
+    label: "Propagate Gene Names from CNVkit"
+    default: true
+    description: >
+      Carry over the gene name from the CNVkit .cns 4th column ('gene') to the output.
+      For BOTH calls: use the CNVkit gene name (ExomeDepth does not report genes).
+      For ExomeDepth-only calls: gene column will be '.' (not available from ExomeDepth).
+      Disable only if the gene column causes issues with downstream tools.
+    category: "Output"
+
+  split_output_by_caller:
+    type: bool
+    label: "Write Separate Files per Caller"
+    default: false
+    description: >
+      In addition to the merged consensus output, write three separate files:
+        {prefix}.CNVkit_only.bed/tsv/vcf
+        {prefix}.ExomeDepth_only.bed/tsv/vcf
+        {prefix}.BOTH.bed/tsv/vcf
+      Useful for comparing caller-specific calls independently and for generating
+      QC statistics per caller in automated pipelines.
+    category: "Output"
+
+  chromosome_sort:
+    type: string
+    label: "Chromosome Sort Order"
+    default: "natural"
+    choices: ["natural", "lexicographic", "input"]
+    description: >
+      Sort order for chromosomes in the output file.
+      'natural': clinical chromosome order — chr1, chr2, ..., chr9, chr10, ..., chr22, chrX, chrY, chrM.
+                 Correct numerical ordering (chr2 before chr10). Recommended for all clinical outputs.
+      'lexicographic': strict alphabetical/ASCII order — chr1, chr10, chr11, ..., chr2 (wrong for chr10+).
+                       Use only if required by a downstream tool with fixed lexicographic expectations.
+      'input': preserve the order in which calls appear in the input files.
+               Useful for debugging or when the input is already in the desired order.
+    category: "Output"
+
+  add_confidence_score:
+    type: bool
+    label: "Add Confidence Score Column"
+    default: true
+    description: >
+      Add a numeric confidence score (0–2) to each output row.
+        2: BOTH callers (highest confidence).
+        1: single caller with score well above threshold (log2 ≥ 1.5× threshold, or BF ≥ 1.5× threshold).
+        0: single caller, borderline score (between 1.0× and 1.5× threshold).
+      Useful for downstream prioritisation and sorting in clinical review workflows.
+    category: "Output"
+
+  genome_build:
+    type: string
+    label: "Genome Build (for VCF header)"
+    default: "GRCh38"
+    choices: ["GRCh38", "GRCh37", "hg38", "hg19"]
+    description: >
+      Genome build to declare in the VCF header when output_format=vcf.
+      Must match the build used for alignment and CNV calling.
+      Only affects the ##reference= header line in VCF output.
+    category: "Output"
+
+inputs:
+  cnvkit_cns:
+    type: file
+    extensions: [".cns", ".tsv", ".txt"]
+    label: "CNVkit Segments (.cns)"
+    required: true
+    description: >
+      CNVkit CBS-segmented output file (.cns). Tab-separated with header row.
+      Expected columns (case-insensitive): chromosome, start, end, gene, log2.
+      Optional additional columns used when present: depth, weight, probes.
+      Produced by 'cnvkit.py segment' or the CNVkit batch pipeline.
+      If ExomeDepth input is empty, all CNVkit calls meeting thresholds
+      are output as CNVkit-only calls (no consensus merging performed).
+
+  exomedepth_tsv:
+    type: file
+    extensions: [".tsv", ".txt", ".csv"]
+    label: "ExomeDepth Calls (.tsv)"
+    required: false
+    description: >
+      ExomeDepth output TSV file with header row. Standard ExomeDepth output.
+      Expected columns (case-insensitive): chromosome/chr, start, end, type,
+      BF/bayes.factor, nexons.
+      Optional columns used when present: reads.expected, reads.observed, reads.ratio, id.
+      If not provided or empty, the tool runs in CNVkit-only mode:
+      all CNVkit calls meeting thresholds are output tagged as 'CNVkit'.
+      No overlap merging is performed; require_both_callers must be false.
+
+outputs:
+  consensus_bed:
+    type: file
+    extensions: [".bed", ".tsv", ".vcf"]
+    label: "Consensus CNV Output"
+    description: >
+      Merged CNV calls in the format selected by output_format.
+      BED: chr, start, end, caller, type, score, size_bp, gene, nexons, confidence.
+      TSV: all BED columns + log2_cnvkit, bf_exomedepth, depth_cnvkit, reads_ratio_exomedepth.
+      VCF: standard VCF with SVTYPE, END, SVLEN, CALLER, LOG2, BF, GENE, CONFIDENCE in INFO.
+      Caller values: 'CNVkit', 'ExomeDepth', or 'BOTH'.
+      Ready for direct input to AnnotSV for clinical annotation.
+
+  consensus_summary:
+    type: file
+    extensions: [".txt"]
+    label: "Consensus Summary Report"
+    description: >
+      Human-readable statistics report including:
+      - Input call counts per caller after threshold filtering
+      - Total consensus output calls
+      - Breakdown by caller (BOTH / CNVkit-only / ExomeDepth-only)
+      - Breakdown by CNV type (DEL / DUP)
+      - Per-chromosome call distribution
+      - Size statistics (min / median / max / mean)
+      - Overlap rate (% of calls confirmed by both callers)
+      - All applied thresholds for reproducibility
+
+command:
+  template: |
+    set -euo pipefail
+    mkdir -p "$(dirname {consensus_bed})"
+    python3 - << 'PYEOF'
+    import sys, os, re, math
+
+    L2_THR         = {log2_threshold}
+    BF_THR         = {bf_threshold}
+    MIN_EXONS      = {min_exons}
+    MIN_PROBES     = {min_probes}
+    MIN_WEIGHT     = {min_weight}
+    MIN_READS_DEV  = {min_reads_ratio}
+    OVL_FRAC       = {overlap_fraction}
+    REQ_SAME_TYPE  = {require_same_type}
+    MIN_SIZE       = {min_size_bp}
+    MAX_SIZE       = {max_size_bp}
+    REQ_BOTH       = {require_both_callers}
+    MERGE_DIST     = {merge_distance}
+    INCL_SINGLE    = {include_single_caller}
+    ANNOT_GENES    = {annotate_genes}
+    SPLIT_OUTPUT   = {split_output_by_caller}
+    CHR_SORT       = "{chromosome_sort}"
+    ADD_CONF       = {add_confidence_score}
+    OUT_FMT        = "{output_format}"
+    GENOME_BUILD   = "{genome_build}"
+    MIN_WEIGHT_VAL = {min_weight}
+
+    cns_path  = "{cnvkit_cns}"
+    exo_path  = "{exomedepth_tsv}"
+    out_bed   = "{consensus_bed}"
+    out_sum   = "{consensus_summary}"
+
+    CHR_ORDER = (
+        [f"chr{i}" for i in range(1, 23)] + ["chrX", "chrY", "chrM"] +
+        [str(i) for i in range(1, 23)] + ["X", "Y", "M", "MT"]
+    )
+
+    def chr_sort_key(call):
+        c = call["chr"].lower()
+        try:
+            return CHR_ORDER.index(call["chr"])
+        except ValueError:
+            return 999 + hash(call["chr"]) % 100
+
+    def norm_type(t):
+        t = t.lower()
+        if "del" in t:
+            return "DEL"
+        if "dup" in t or "gain" in t:
+            return "DUP"
+        return t.upper()
+
+    def col_idx(header, *names):
+        hl = [h.lower().replace(".", "_").replace("-", "_") for h in header]
+        for name in names:
+            n = name.lower()
+            if n in hl:
+                return hl.index(n)
+        return None
+
+    def confidence(caller, score, thr):
+        if caller == "BOTH":
+            return 2
+        if score >= thr * 1.5:
+            return 1
+        return 0
+
+    def size_filter(call):
+        s = call["size"]
+        if MIN_SIZE > 0 and s < MIN_SIZE:
+            return False
+        if MAX_SIZE > 0 and s > MAX_SIZE:
+            return False
+        return True
+
+    def parse_cns(path):
+        calls = []
+        if not path or not os.path.exists(path) or os.path.getsize(path) < 10:
+            return calls
+        with open(path) as f:
+            header = f.readline().strip().split("\t")
+            ci  = col_idx(header, "chromosome", "chr", "chrom") or 0
+            si  = col_idx(header, "start") or 1
+            ei  = col_idx(header, "end") or 2
+            gi  = col_idx(header, "gene") or 3
+            l2i = col_idx(header, "log2")
+            dep = col_idx(header, "depth")
+            wi  = col_idx(header, "weight")
+            pri = col_idx(header, "probes")
+            if l2i is None:
+                l2i = 4
+            for line in f:
+                p = line.strip().split("\t")
+                if len(p) <= max(ci, si, ei, l2i):
+                    continue
+                try:
+                    chrom = p[ci]
+                    start = int(p[si])
+                    end   = int(p[ei])
+                    log2v = float(p[l2i])
+                    gene  = p[gi] if gi is not None and gi < len(p) and ANNOT_GENES else "."
+                    depth = float(p[dep]) if dep is not None and dep < len(p) else 0.0
+                    weight= float(p[wi])  if wi  is not None and wi  < len(p) else 1.0
+                    probes= int(p[pri])   if pri is not None and pri < len(p) else 0
+                    size  = end - start
+                    if abs(log2v) < L2_THR:
+                        continue
+                    if MIN_WEIGHT_VAL > 0 and weight < MIN_WEIGHT_VAL:
+                        continue
+                    if MIN_PROBES > 0 and probes > 0 and probes < MIN_PROBES:
+                        continue
+                    if not size_filter({"size": size}):
+                        continue
+                    ctype = "DEL" if log2v < 0 else "DUP"
+                    conf  = confidence("CNVkit", abs(log2v), L2_THR)
+                    calls.append({
+                        "chr": chrom, "start": start, "end": end,
+                        "caller": "CNVkit", "type": ctype,
+                        "score": round(log2v, 5), "gene": gene, "size": size,
+                        "nexons": 0, "log2": round(log2v, 5), "bf": 0.0,
+                        "depth": round(depth, 3), "reads_ratio": 0.0,
+                        "confidence": conf
+                    })
+                except (ValueError, IndexError):
+                    pass
+        return calls
+
+    def parse_exomedepth(path):
+        calls = []
+        if not path or not os.path.exists(path) or os.path.getsize(path) < 10:
+            return calls
+        with open(path) as f:
+            header = f.readline().strip().split("\t")
+            ci  = col_idx(header, "chromosome", "chr", "chrom") or 0
+            si  = col_idx(header, "start") or 1
+            ei  = col_idx(header, "end") or 2
+            ti  = col_idx(header, "type")
+            bfi = col_idx(header, "bf", "bayes_factor", "bayes.factor")
+            ni  = col_idx(header, "nexons", "num_exons")
+            rri = col_idx(header, "reads_ratio", "reads.ratio")
+            for line in f:
+                p = line.strip().split("\t")
+                if len(p) <= max(ci, si, ei):
+                    continue
+                try:
+                    chrom  = p[ci]
+                    start  = int(p[si])
+                    end    = int(p[ei])
+                    ctype  = norm_type(p[ti]) if ti is not None and ti < len(p) else "CNV"
+                    bf     = float(p[bfi]) if bfi is not None and bfi < len(p) else 999.0
+                    nexons = int(p[ni])   if ni  is not None and ni  < len(p) else 1
+                    rr     = float(p[rri]) if rri is not None and rri < len(p) else 1.0
+                    size   = end - start
+                    if bf < BF_THR:
+                        continue
+                    if nexons < MIN_EXONS:
+                        continue
+                    if MIN_READS_DEV > 0 and abs(rr - 1.0) < MIN_READS_DEV:
+                        continue
+                    if not size_filter({"size": size}):
+                        continue
+                    conf = confidence("ExomeDepth", bf, BF_THR)
+                    calls.append({
+                        "chr": chrom, "start": start, "end": end,
+                        "caller": "ExomeDepth", "type": ctype,
+                        "score": round(bf, 4), "gene": ".", "size": size,
+                        "nexons": nexons, "log2": 0.0, "bf": round(bf, 4),
+                        "depth": 0.0, "reads_ratio": round(rr, 4),
+                        "confidence": conf
+                    })
+                except (ValueError, IndexError):
+                    pass
+        return calls
+
+    def merge_nearby(calls, dist):
+        if dist == 0 or len(calls) < 2:
+            return calls
+        calls = sorted(calls, key=lambda x: (x["chr"], x["start"]))
+        merged = [calls[0]]
+        for c in calls[1:]:
+            p = merged[-1]
+            if c["chr"] == p["chr"] and c["type"] == p["type"] and c["start"] - p["end"] <= dist:
+                p["end"]  = max(p["end"], c["end"])
+                p["size"] = p["end"] - p["start"]
+                p["score"] = max(abs(p["score"]), abs(c["score"])) * (1 if p["score"] >= 0 else -1)
+            else:
+                merged.append(c)
+        return merged
+
+    def reciprocal_overlap(a, b):
+        if a["chr"] != b["chr"]:
+            return False
+        if REQ_SAME_TYPE and a["type"] != b["type"]:
+            return False
+        os_ = max(a["start"], b["start"])
+        oe  = min(a["end"],   b["end"])
+        if oe <= os_:
+            return False
+        ovl_len = oe - os_
+        la = a["end"] - a["start"]
+        lb = b["end"] - b["start"]
+        if la == 0 or lb == 0:
+            return False
+        return (ovl_len / la) >= OVL_FRAC and (ovl_len / lb) >= OVL_FRAC
+
+    def sort_calls(calls):
+        if CHR_SORT == "natural":
+            return sorted(calls, key=chr_sort_key)
+        elif CHR_SORT == "lexicographic":
+            return sorted(calls, key=lambda x: (x["chr"], x["start"]))
+        return calls
+
+    cnvkit_calls = parse_cns(cns_path)
+    exo_calls    = parse_exomedepth(exo_path)
+
+    if MERGE_DIST > 0:
+        cnvkit_calls = merge_nearby(cnvkit_calls, MERGE_DIST)
+        exo_calls    = merge_nearby(exo_calls, MERGE_DIST)
+
+    merged  = []
+    used_exo = set()
+
+    for c in cnvkit_calls:
+        matched = False
+        for j, e in enumerate(exo_calls):
+            if j in used_exo:
+                continue
+            if reciprocal_overlap(c, e):
+                both_call = {
+                    "chr":    c["chr"],
+                    "start":  min(c["start"], e["start"]),
+                    "end":    max(c["end"],   e["end"]),
+                    "caller": "BOTH",
+                    "type":   c["type"],
+                    "score":  c["score"],
+                    "gene":   c["gene"] if c["gene"] != "." else ".",
+                    "size":   max(c["end"], e["end"]) - min(c["start"], e["start"]),
+                    "nexons": e["nexons"],
+                    "log2":   c["log2"],
+                    "bf":     e["bf"],
+                    "depth":  c["depth"],
+                    "reads_ratio": e["reads_ratio"],
+                    "confidence": 2
+                }
+                merged.append(both_call)
+                used_exo.add(j)
+                matched = True
+                break
+        if not matched and INCL_SINGLE:
+            merged.append(c)
+
+    for j, e in enumerate(exo_calls):
+        if j not in used_exo and INCL_SINGLE:
+            merged.append(e)
+
+    if REQ_BOTH:
+        merged = [m for m in merged if m["caller"] == "BOTH"]
+
+    merged = sort_calls(merged)
+
+    n_total  = len(merged)
+    n_both   = sum(1 for m in merged if m["caller"] == "BOTH")
+    n_ck     = sum(1 for m in merged if m["caller"] == "CNVkit")
+    n_exo    = sum(1 for m in merged if m["caller"] == "ExomeDepth")
+    n_del    = sum(1 for m in merged if m["type"] in ("DEL",))
+    n_dup    = sum(1 for m in merged if m["type"] in ("DUP",))
+    sizes    = [m["size"] for m in merged] if merged else [0]
+    mean_sz  = round(sum(sizes) / max(len(sizes), 1))
+    med_sz   = sorted(sizes)[len(sizes)//2]
+
+    chr_counts = {}
+    for m in merged:
+        chr_counts[m["chr"]] = chr_counts.get(m["chr"], 0) + 1
+
+    def write_bed(calls, path):
+        with open(path, "w") as f:
+            f.write("chr\tstart\tend\tcaller\ttype\tscore\tsize_bp\tgene\tnexons")
+            if ADD_CONF:
+                f.write("\tconfidence")
+            f.write("\n")
+            for m in calls:
+                line = f"{m['chr']}\t{m['start']}\t{m['end']}\t{m['caller']}\t{m['type']}\t{m['score']}\t{m['size']}\t{m['gene']}\t{m['nexons']}"
+                if ADD_CONF:
+                    line += f"\t{m['confidence']}"
+                f.write(line + "\n")
+
+    def write_tsv(calls, path):
+        with open(path, "w") as f:
+            f.write("chr\tstart\tend\tcaller\ttype\tscore\tsize_bp\tgene\tnexons\tlog2_cnvkit\tbf_exomedepth\tdepth_cnvkit\treads_ratio_exomedepth")
+            if ADD_CONF:
+                f.write("\tconfidence")
+            f.write("\n")
+            for m in calls:
+                line = (f"{m['chr']}\t{m['start']}\t{m['end']}\t{m['caller']}\t{m['type']}\t{m['score']}\t{m['size']}\t{m['gene']}\t{m['nexons']}"
+                        f"\t{m['log2']}\t{m['bf']}\t{m['depth']}\t{m['reads_ratio']}")
+                if ADD_CONF:
+                    line += f"\t{m['confidence']}"
+                f.write(line + "\n")
+
+    def write_vcf(calls, path):
+        with open(path, "w") as f:
+            f.write("##fileformat=VCFv4.2\n")
+            f.write(f"##reference={GENOME_BUILD}\n")
+            f.write('##INFO=<ID=SVTYPE,Number=1,Type=String,Description="SV type: DEL or DUP">\n')
+            f.write('##INFO=<ID=END,Number=1,Type=Integer,Description="End position of SV">\n')
+            f.write('##INFO=<ID=SVLEN,Number=1,Type=Integer,Description="SV length in bp">\n')
+            f.write('##INFO=<ID=CALLER,Number=1,Type=String,Description="Caller(s): CNVkit, ExomeDepth, BOTH">\n')
+            f.write('##INFO=<ID=LOG2,Number=1,Type=Float,Description="CNVkit log2 copy ratio">\n')
+            f.write('##INFO=<ID=BF,Number=1,Type=Float,Description="ExomeDepth Bayes factor">\n')
+            f.write('##INFO=<ID=GENE,Number=1,Type=String,Description="Gene name">\n')
+            f.write('##INFO=<ID=NEXONS,Number=1,Type=Integer,Description="Number of exons spanned">\n')
+            if ADD_CONF:
+                f.write('##INFO=<ID=CONFIDENCE,Number=1,Type=Integer,Description="Confidence score 0-2">\n')
+            f.write("#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n")
+            for i, m in enumerate(calls):
+                svtype = m["type"]
+                alt    = f"<{svtype}>"
+                svlen  = m["end"] - m["start"]
+                if svtype == "DEL":
+                    svlen = -svlen
+                info = (f"SVTYPE={svtype};END={m['end']};SVLEN={svlen};"
+                        f"CALLER={m['caller']};LOG2={m['log2']};BF={m['bf']};"
+                        f"GENE={m['gene']};NEXONS={m['nexons']}")
+                if ADD_CONF:
+                    info += f";CONFIDENCE={m['confidence']}"
+                f.write(f"{m['chr']}\t{m['start']}\tCNV_{i+1:05d}\tN\t{alt}\t.\tPASS\t{info}\n")
+
+    if OUT_FMT == "bed":
+        write_bed(merged, out_bed)
+    elif OUT_FMT == "tsv":
+        write_tsv(merged, out_bed)
+    elif OUT_FMT == "vcf":
+        write_vcf(merged, out_bed)
+
+    if SPLIT_OUTPUT:
+        base = os.path.splitext(out_bed)[0]
+        ext  = f".{OUT_FMT}"
+        for tag in ("CNVkit", "ExomeDepth", "BOTH"):
+            sub = [m for m in merged if m["caller"] == tag]
+            path = f"{base}.{tag}{ext}"
+            if OUT_FMT == "bed":
+                write_bed(sub, path)
+            elif OUT_FMT == "tsv":
+                write_tsv(sub, path)
+            elif OUT_FMT == "vcf":
+                write_vcf(sub, path)
+
+    with open(out_sum, "w") as f:
+        f.write("=== CNV Consensus Summary ===\n")
+        f.write(f"CNVkit input calls (after threshold filters):    {len(cnvkit_calls)}\n")
+        f.write(f"ExomeDepth input calls (after threshold filters):{len(exo_calls)}\n")
+        f.write("---\n")
+        f.write(f"Total consensus calls:         {n_total}\n")
+        f.write(f"  BOTH callers:                {n_both}\n")
+        f.write(f"  CNVkit-only:                 {n_ck}\n")
+        f.write(f"  ExomeDepth-only:             {n_exo}\n")
+        f.write("---\n")
+        f.write(f"Deletions (DEL):               {n_del}\n")
+        f.write(f"Duplications (DUP):            {n_dup}\n")
+        f.write(f"Other type:                    {n_total - n_del - n_dup}\n")
+        f.write("---\n")
+        f.write(f"Size range: {min(sizes)} – {max(sizes)} bp\n")
+        f.write(f"Median size: {med_sz} bp | Mean size: {mean_sz} bp\n")
+        if n_total > 0:
+            f.write(f"Dual-caller overlap rate: {(n_both / n_total) * 100:.1f}%\n")
+        f.write("---\n")
+        f.write("Per-chromosome distribution:\n")
+        for chrom, cnt in sorted(chr_counts.items(), key=lambda x: chr_sort_key({"chr": x[0]})):
+            f.write(f"  {chrom}: {cnt}\n")
+        f.write("---\n")
+        f.write("Applied thresholds:\n")
+        f.write(f"  CNVkit |log2| >= {L2_THR}\n")
+        f.write(f"  CNVkit min probes >= {MIN_PROBES} (0=off)\n")
+        f.write(f"  CNVkit min weight >= {MIN_WEIGHT_VAL} (0=off)\n")
+        f.write(f"  ExomeDepth BF >= {BF_THR}\n")
+        f.write(f"  ExomeDepth nexons >= {MIN_EXONS}\n")
+        f.write(f"  ExomeDepth reads_ratio deviation >= {MIN_READS_DEV} (0=off)\n")
+        f.write(f"  Reciprocal overlap >= {OVL_FRAC}\n")
+        f.write(f"  Require same CNV type: {REQ_SAME_TYPE}\n")
+        f.write(f"  Min size: {MIN_SIZE} bp (0=off)\n")
+        f.write(f"  Max size: {MAX_SIZE} bp (0=off)\n")
+        f.write(f"  Merge nearby (same caller): {MERGE_DIST} bp (0=off)\n")
+        f.write(f"  Require BOTH callers: {REQ_BOTH}\n")
+        f.write(f"  Include single-caller calls: {INCL_SINGLE}\n")
+        f.write(f"  Output format: {OUT_FMT}\n")
+        f.write(f"  Chromosome sort: {CHR_SORT}\n")
+
+    print(f"[Consensus] {n_total} total: {n_both} BOTH, {n_ck} CNVkit-only, {n_exo} ExomeDepth-only | {n_del} DEL / {n_dup} DUP")
+    PYEOF
+  shell: "/bin/bash"

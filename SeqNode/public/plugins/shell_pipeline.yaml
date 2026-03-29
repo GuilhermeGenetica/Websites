@@ -1,0 +1,192 @@
+# shell_cmd.yaml
+
+name:        "Shell Command"
+id:          "shell_cmd"
+version:     "1.0.1"
+category:    "Utilities"
+description: >
+  Generic shell command node — allows entering any terminal command
+  (ls, grep, awk, cp, mv, echo, python script.py, etc.) directly into the
+  workflow graph, with named inputs and outputs that connect to other nodes
+  using $node_id.port_key exactly like any other SeqNode plugin.
+
+  Typical use cases:
+    - Inserting an ls, grep, or awk between two tool nodes
+    - Renaming / moving files between stages
+    - Running an inline Python/R script
+    - Creating directories, copying references, generating checksums
+    - Any shell step that doesn't justify a dedicated plugin
+
+  The "cmd" field accepts multi-line commands with \ and pipes |.
+  Use {input_file} and {output_file} to reference files
+  connected via inputs_map / outputs_map.
+  Optionally use {input_file2}...{input_file5} and
+  {output_file2}...{output_file5} for multiple files.
+
+  The working directory (workdir) is automatically applied by the
+  runner via cwd — it is not necessary to prefix the command with 'cd'.
+
+author:  "SeqNode-OS"
+license: "MIT"
+tags:    [shell, bash, command, script, utility, grep, awk, ls, cp, mv, custom]
+
+# ── Installation: not required (bash is universal) ─────────────────────────
+install:
+  method:        system
+  binary:        bash
+  version_check: "bash --version | head -1"
+
+# ── Default Runtime ───────────────────────────────────────────────────────────
+runtime:
+  type:  system
+  shell: "/bin/bash"
+
+# ── Parameters ───────────────────────────────────────────────────────────────
+params:
+
+  cmd:
+    type:    string
+    label:   "Shell Command"
+    default: "echo {input_file}"
+    description: >
+      Shell command to execute. Use placeholders to reference files:
+        {input_file}   → inputs_map.input_file   (connection from previous node)
+        {input_file2}  → inputs_map.input_file2
+        {input_file3}  → inputs_map.input_file3
+        {input_file4}  → inputs_map.input_file4
+        {input_file5}  → inputs_map.input_file5
+        {output_file}  → outputs_map.output_file (passed to the next node)
+        {output_file2} → outputs_map.output_file2
+        {output_file3} → outputs_map.output_file3
+        {output_file4} → outputs_map.output_file4
+        {output_file5} → outputs_map.output_file5
+      Examples:
+        ls -lh {input_file}
+        grep "PASS" {input_file} > {output_file}
+        cp {input_file} {output_file}
+        awk '$6 > 30' {input_file} > {output_file}
+        python myscript.py --in {input_file} --out {output_file}
+    category: "Command"
+
+  workdir:
+    type:    string
+    label:   "Working Directory"
+    default: ""
+    description: >
+      Working directory for command execution.
+      Leave empty to use the Working Directory from global Settings.
+      If both are empty, the server directory is used.
+      NOTE: This field is automatically applied by the runner (cwd);
+      it is NOT necessary to prefix the command with 'cd'.
+    category: "Runtime"
+
+  conda_env:
+    type:    string
+    label:   "Conda Environment (optional)"
+    default: ""
+    description: >
+      Name of the conda environment to activate before executing the command.
+      Leave empty to execute in the system environment.
+    category: "Runtime"
+
+  extra_env:
+    type:    string
+    label:   "Environment Variables (VAR=val VAR2=val2)"
+    default: ""
+    description: >
+      Additional environment variables separated by spaces, injected
+      as a command prefix. Example: TMPDIR=/tmp LANG=C
+    category: "Runtime"
+
+  fail_on_error:
+    type:    bool
+    label:   "Fail if returncode != 0"
+    default: true
+    description: >
+      If enabled (default), the node fails and stops the workflow when the command
+      returns an error code. Disable for commands that may return
+      rc != 0 without being a real error (e.g., grep with no results returns 1).
+    category: "Behaviour"
+
+# ── Inputs — all optional ─────────────────────────────────────────────────
+inputs:
+  input_file:
+    type:        file
+    extensions:  []
+    label:       "Primary Input"
+    description: "Referenced as {input_file} in the cmd."
+    required:    false
+
+  input_file2:
+    type:        file
+    extensions:  []
+    label:       "Input 2"
+    description: "Referenced as {input_file2} in the cmd."
+    required:    false
+
+  input_file3:
+    type:        file
+    extensions:  []
+    label:       "Input 3"
+    description: "Referenced as {input_file3} in the cmd."
+    required:    false
+
+  input_file4:
+    type:        file
+    extensions:  []
+    label:       "Input 4"
+    description: "Referenced as {input_file4} in the cmd."
+    required:    false
+
+  input_file5:
+    type:        file
+    extensions:  []
+    label:       "Input 5"
+    description: "Referenced as {input_file5} in the cmd."
+    required:    false
+
+# ── Outputs — all optional ────────────────────────────────────────────────
+outputs:
+  output_file:
+    type:        file
+    extensions:  []
+    label:       "Primary Output"
+    description: "Referenced as {output_file} in the cmd. Passed to subsequent nodes."
+    required:    false
+
+  output_file2:
+    type:        file
+    extensions:  []
+    label:       "Output 2"
+    description: "Referenced as {output_file2} in the cmd."
+    required:    false
+
+  output_file3:
+    type:        file
+    extensions:  []
+    label:       "Output 3"
+    description: "Referenced as {output_file3} in the cmd."
+    required:    false
+
+  output_file4:
+    type:        file
+    extensions:  []
+    label:       "Output 4"
+    description: "Referenced as {output_file4} in the cmd."
+    required:    false
+
+  output_file5:
+    type:        file
+    extensions:  []
+    label:       "Output 5"
+    description: "Referenced as {output_file5} in the cmd."
+    required:    false
+
+# ── Command Template ──────────────────────────────────────────────────────
+# NOTE: workdir is handled by the runner via cwd= (no cd needed here).
+# conda_env and extra_env are prefixed by the engine when not empty.
+# This template is intentionally simple to avoid Jinja2 issues
+# during pre-flight and command preview.
+command:
+  shell: "/bin/bash"
+  template: "{cmd}"

@@ -1,0 +1,137 @@
+/* Adress: src/
+  File: index.css
+  Extension: .css
+*/
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Light Theme - Navy Blue & Gold */
+    --background: 220 20% 97%; /* Off-white with a hint of blue */
+    --foreground: 224 71% 10%; /* Dark Navy Blue for text */
+    --card: 0 0% 100%; /* White */
+    --card-foreground: 224 71% 10%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 224 71% 10%;
+    --primary: 38 92% 50%; /* Vibrant Gold */
+    --primary-foreground: 224 71% 4%; /* Dark Navy for text on gold buttons */
+    --secondary: 45 53% 92%; /* Light Beige/Gold */
+    --secondary-foreground: 224 71% 15%;
+    --muted: 220 20% 94%;
+    --muted-foreground: 224 71% 25%;
+    --accent: 45 53% 92%;
+    --accent-foreground: 224 71% 15%;
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 220 20% 88%;
+    --input: 220 20% 92%;
+    --ring: 38 92% 50%; /* Gold for focus rings */
+    --radius: 0.75rem;
+  }
+ 
+  .dark {
+    /* Dark Theme - Intense Navy Blue & Gold */
+    --background: 224 71% 4%; /* Intense Dark Navy Blue */
+    --foreground: 210 40% 98%; /* Light text for contrast */
+    --card: 224 71% 7%; /* Slightly lighter Navy for cards */
+    --card-foreground: 210 40% 98%;
+    --popover: 224 71% 4%;
+    --popover-foreground: 210 40% 98%;
+    --primary: 45 86% 62%; /* Brighter Gold for dark theme */
+    --primary-foreground: 224 71% 4%;
+    --secondary: 224 71% 10%;
+    --secondary-foreground: 210 40% 98%;
+    --muted: 224 71% 10%;
+    --muted-foreground: 215 20.2% 65.1%;
+    --accent: 224 71% 10%;
+    --accent-foreground: 210 40% 98%;
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 224 71% 12%;
+    --input: 224 71% 10%;
+    --ring: 45 86% 62%;
+  }
+}
+ 
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+}
+
+@layer utilities {
+  .text-glow-gold {
+    text-shadow: 0 0 8px hsl(var(--primary) / 0.5), 0 0 20px hsl(var(--primary) / 0.2);
+  }
+
+  .ring-glow-gold {
+     box-shadow: 0 0 0 2px hsl(var(--background)), 0 0 0 4px hsl(var(--primary) / 0.5), 0 0 20px hsl(var(--primary) / 0.3);
+  }
+  
+  .bg-hero-gradient-light {
+    background-image: radial-gradient(circle at 10% 20%, hsl(var(--primary) / 0.05), transparent 30%),
+                      radial-gradient(circle at 90% 80%, hsl(240 80% 50% / 0.05), transparent 30%);
+  }
+
+  .dark .bg-hero-gradient-dark {
+     background-image: radial-gradient(circle at 20% 80%, hsl(var(--primary) / 0.1), transparent 40%),
+                      radial-gradient(circle at 80% 20%, hsl(224 71% 12%)), transparent 40%);
+  }
+
+  .card-border-gradient {
+    border: 1px solid transparent;
+    background: linear-gradient(var(--card), var(--card)) padding-box,
+                linear-gradient(120deg, hsl(var(--border)), hsl(var(--primary)/0.5), hsl(var(--border))) border-box;
+  }
+
+  .sentence-card {
+    @apply bg-card/60 backdrop-blur-xl;
+  }
+
+  .level-card {
+    transition: all 0.3s ease;
+    transform: translateY(0);
+  }
+
+  .level-card:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+  }
+
+  .dark .level-card:hover {
+    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
+  }
+
+  .floating-animation {
+    animation: float 4s ease-in-out infinite;
+  }
+
+  @keyframes float {
+    0%, 100% { transform: translateY(0px); }
+    50% { transform: translateY(-15px); }
+  }
+
+  .pulse-glow {
+    animation: pulse-glow 2s ease-in-out infinite;
+  }
+
+  @keyframes pulse-glow {
+    0%, 100% { box-shadow: 0 0 20px theme('colors.blue.500/30'); }
+    50% { box-shadow: 0 0 35px theme('colors.blue.500/60'); }
+  }
+  
+  .audio-wave {
+    animation: wave 1.5s ease-in-out infinite;
+  }
+
+  @keyframes wave {
+    0%, 100% { transform: scaleY(1); }
+    50% { transform: scaleY(1.5); }
+  }
+}
